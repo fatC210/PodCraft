@@ -1,15 +1,17 @@
 import { Link, useLocation } from "react-router-dom";
 import { Home, Mic, Clock, Settings } from "lucide-react";
-
-const navItems = [
-  { icon: Home, label: "工作台", path: "/" },
-  { icon: Mic, label: "创建", path: "/create" },
-  { icon: Clock, label: "历史", path: "/history" },
-  { icon: Settings, label: "设置", path: "/settings" },
-];
+import { useI18n } from "@/lib/i18n";
 
 export default function Sidebar() {
   const location = useLocation();
+  const { t } = useI18n();
+
+  const navItems = [
+    { icon: Home, label: t.nav.workspace, path: "/" },
+    { icon: Mic, label: t.nav.create, path: "/create" },
+    { icon: Clock, label: t.nav.history, path: "/history" },
+    { icon: Settings, label: t.nav.settings, path: "/settings" },
+  ];
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-16 bg-card border-r border-border flex flex-col items-center py-6 z-50">

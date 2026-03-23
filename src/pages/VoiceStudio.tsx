@@ -1,14 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Mic, Square, Send } from "lucide-react";
-
-const STAGES = [
-  { id: 1, label: "确定主题", key: "topic" },
-  { id: 2, label: "筛选素材", key: "material" },
-  { id: 3, label: "生成脚本", key: "script" },
-  { id: 4, label: "选择音色", key: "voice" },
-  { id: 5, label: "生成播客", key: "generate" },
-] as const;
+import { useI18n } from "@/lib/i18n";
 
 type Message = {
   id: number;
@@ -17,27 +10,19 @@ type Message = {
   timestamp: string;
 };
 
-const initialMessages: Message[] = [
-  {
-    id: 1,
-    role: "ai",
-    content: "你好！我是你的播客制作助手。请告诉我你想制作什么主题的播客？你可以按住麦克风按钮说话，也可以输入文字。",
-    timestamp: "00:00",
-  },
-];
-
-const mockResponses: Record<string, string> = {
-  default: `收到！让我为你搜索相关资料……已找到 3 条相关内容，我来逐一播报：\n\n**1.** 该领域最新研究进展综述，来源：Nature Science Review\n\n**2.** 行业专家访谈摘要，来源：Tech Insights Daily\n\n**3.** 相关技术应用案例分析，来源：MIT Technology Review\n\n你想保留哪些素材？可以说"保留第一条"或"跳过第二条"。`,
-  keep: `好的，已保留该素材。还有其他需要调整的吗？如果素材确认完毕，我们可以进入下一步——设置播客参数。`,
-  next: `素材已确认完毕。现在让我们设置播客参数：\n\n• **输出语言**：中文\n• **角色数量**：2 位\n• **角色名称**：待确认\n\n请告诉我角色名称，例如"主持人叫小明，嘉宾叫小红"。`,
-  script: `脚本已生成！以下是概要：\n\n**开场**（0:00-0:30）：主持人介绍本期主题\n**正文**（0:30-4:00）：围绕素材展开深入讨论\n**总结**（4:00-5:00）：回顾要点并展望\n\n总时长约 5 分钟。你想试听或修改脚本吗？`,
-  voice: `现在为角色选择音色。我为你准备了几个音色样本：\n\n🔊 **音色 1** — Roger：沉稳专业的男声\n🔊 **音色 2** — Sarah：温和清晰的女声\n🔊 **音色 3** — George：富有磁性的男声\n\n说"试听第一个"来预览，或直接选择。`,
-  generate: `所有参数已确认！开始合成播客音频……\n\n⏳ 正在处理脚本段落 1/6\n⏳ 正在合成角色语音\n⏳ 正在拼接音频片段\n\n预计需要 30 秒左右完成。`,
-};
-
 export default function VoiceStudio() {
+  const { t } = useI18n();
+
+  const stages = t.studio.stages.map((label, i) => ({
+    id: i + 1,
+    label,
+    key: ["topic", "material", "script", "voice", "generate"][i],
+  }));
+
   const [currentStage, setCurrentStage] = useState(0);
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [messages, setMessages] = useState<Message[]>([
+    { id: 1, role: "ai", content: t.studio.greeting, timestamp: "00:00" },
+  ]);
   const [isRecording, setIsRecording] = useState(false);
   const [inputText, setInputText] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -57,13 +42,14 @@ export default function VoiceStudio() {
 
   const getAIResponse = useCallback((userText: string): string => {
     const lower = userText.toLowerCase();
-    if (lower.includes("保留") || lower.includes("keep")) return mockResponses.keep;
-    if (lower.includes("下一步") || lower.includes("确认") || lower.includes("没问题")) return mockResponses.next;
-    if (lower.includes("脚本") || lower.includes("script")) return mockResponses.script;
-    if (lower.includes("音色") || lower.includes("voice") || lower.includes("试听")) return mockResponses.voice;
-    if (lower.includes("生成") || lower.includes("开始")) return mockResponses.generate;
-    return mockResponses.default;
-  }, []);
+    const kw = t.studio.keywords;
+    if (kw.keep.some(k => lower.includes(k))) return t.studio.responses.keep;
+    if (kw.next.some(k => lower.includes(k))) return t.studio.responses.next;
+    if (kw.script.some(k => lower.includes(k))) return t.studio.responses.script;
+    if (kw.voice.some(k => lower.includes(k))) return t.studio.responses.voice;
+    if (kw.generate.some(k => lower.includes(k))) return t.studio.responses.generate;
+    return t.studio.responses.default;
+  }, [t]);
 
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isProcessing) return;
@@ -71,69 +57,61 @@ export default function VoiceStudio() {
     setInputText("");
     setIsProcessing(true);
 
+    const kw = t.studio.keywords;
     setTimeout(() => {
       const response = getAIResponse(text);
       addMessage("ai", response);
       setIsProcessing(false);
 
-      // Advance stage based on keywords
       const lower = text.toLowerCase();
-      if (currentStage === 0 && (lower.includes("播客") || lower.includes("主题") || text.length > 5)) {
+      if (currentStage === 0 && (kw.topic.some(k => lower.includes(k)) || text.length > 5)) {
         setCurrentStage(1);
-      } else if (currentStage === 1 && (lower.includes("确认") || lower.includes("下一步"))) {
+      } else if (currentStage === 1 && kw.next.some(k => lower.includes(k))) {
         setCurrentStage(2);
-      } else if (currentStage === 2 && lower.includes("脚本")) {
+      } else if (currentStage === 2 && kw.script.some(k => lower.includes(k))) {
         setCurrentStage(3);
-      } else if (currentStage === 3 && lower.includes("音色")) {
+      } else if (currentStage === 3 && kw.voice.some(k => lower.includes(k))) {
         setCurrentStage(4);
       }
     }, 1200);
-  }, [addMessage, getAIResponse, isProcessing, currentStage]);
+  }, [addMessage, getAIResponse, isProcessing, currentStage, t]);
 
   const toggleRecording = useCallback(() => {
     if (isRecording) {
       setIsRecording(false);
-      // Simulate voice input
-      addMessage("user", "我想做一期关于量子计算最新进展的播客");
+      addMessage("user", t.studio.mockVoiceInput);
       setIsProcessing(true);
       setTimeout(() => {
-        addMessage("ai", mockResponses.default);
+        addMessage("ai", t.studio.responses.default);
         setIsProcessing(false);
         if (currentStage === 0) setCurrentStage(1);
       }, 1500);
     } else {
       setIsRecording(true);
     }
-  }, [isRecording, addMessage, currentStage]);
+  }, [isRecording, addMessage, currentStage, t]);
 
   return (
     <div className="h-screen flex flex-col">
-      {/* Top bar */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-card/50 backdrop-blur-sm">
         <div className="flex items-center gap-4">
           <Link to="/" className="text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft size={18} />
           </Link>
-          <div>
-            <p className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase">语音创作工作台</p>
-          </div>
+          <p className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase">{t.studio.title}</p>
         </div>
 
-        {/* Stage indicator */}
         <div className="flex items-center gap-1">
-          {STAGES.map((stage, i) => (
+          {stages.map((stage, i) => (
             <div key={stage.id} className="flex items-center">
               <div className={`
                 flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono transition-all duration-300
-                ${i <= currentStage
-                  ? "text-primary bg-primary/10"
-                  : "text-muted-foreground"
-                }
+                ${i <= currentStage ? "text-primary bg-primary/10" : "text-muted-foreground"}
               `}>
                 <span className={`w-1.5 h-1.5 rounded-full ${i < currentStage ? "bg-primary" : i === currentStage ? "bg-primary animate-pulse-amber" : "bg-border"}`} />
                 {stage.label}
               </div>
-              {i < STAGES.length - 1 && (
+              {i < stages.length - 1 && (
                 <div className={`w-4 h-px mx-0.5 ${i < currentStage ? "bg-primary/40" : "bg-border"}`} />
               )}
             </div>
@@ -141,29 +119,19 @@ export default function VoiceStudio() {
         </div>
       </header>
 
-      {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="max-w-2xl mx-auto space-y-4">
           {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex gap-3 animate-fade-up ${msg.role === "user" ? "flex-row-reverse" : ""}`}
-            >
+            <div key={msg.id} className={`flex gap-3 animate-fade-up ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
               <div className={`
                 w-7 h-7 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-mono font-bold
-                ${msg.role === "ai"
-                  ? "bg-primary/10 text-primary"
-                  : "bg-surface-alt text-muted-foreground"
-                }
+                ${msg.role === "ai" ? "bg-primary/10 text-primary" : "bg-surface-alt text-muted-foreground"}
               `}>
-                {msg.role === "ai" ? "AI" : "你"}
+                {msg.role === "ai" ? "AI" : t.studio.you}
               </div>
               <div className={`
                 max-w-[80%] rounded px-4 py-3 text-sm leading-relaxed
-                ${msg.role === "ai"
-                  ? "bg-card border border-border"
-                  : "bg-surface-alt border border-border"
-                }
+                ${msg.role === "ai" ? "bg-card border border-border" : "bg-surface-alt border border-border"}
               `}>
                 {msg.content.split("\n").map((line, i) => (
                   <p key={i} className={`${i > 0 ? "mt-2" : ""} ${line.startsWith("**") ? "font-semibold" : ""}`}>
@@ -177,48 +145,41 @@ export default function VoiceStudio() {
 
           {isProcessing && (
             <div className="flex gap-3 animate-fade-up">
-              <div className="w-7 h-7 rounded bg-primary/10 flex items-center justify-center text-[10px] font-mono font-bold text-primary">
-                AI
-              </div>
+              <div className="w-7 h-7 rounded bg-primary/10 flex items-center justify-center text-[10px] font-mono font-bold text-primary">AI</div>
               <div className="bg-card border border-border rounded px-4 py-3">
                 <div className="flex items-center gap-1.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-amber" />
                   <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-amber" style={{ animationDelay: "300ms" }} />
                   <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-amber" style={{ animationDelay: "600ms" }} />
-                  <span className="ml-2 font-mono text-[10px] text-muted-foreground">处理中</span>
+                  <span className="ml-2 font-mono text-[10px] text-muted-foreground">{t.studio.processing}</span>
                 </div>
               </div>
             </div>
           )}
-
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* Input area */}
       <div className="border-t border-border bg-card/50 backdrop-blur-sm px-6 py-5">
         <div className="max-w-2xl mx-auto">
-          {/* Mode tabs */}
           <div className="flex items-center justify-center gap-6 mb-4">
             <span className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase">
-              {isRecording ? "● 录音中" : "准备就绪"}
+              {isRecording ? t.studio.recording : t.studio.ready}
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Text input */}
             <div className="flex-1 relative">
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend(inputText)}
-                placeholder="输入文字消息，或按住麦克风说话…"
+                placeholder={t.studio.inputPlaceholder}
                 className="w-full bg-surface border border-border rounded px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50 transition-colors"
               />
             </div>
 
-            {/* Send button */}
             {inputText.trim() && (
               <button
                 onClick={() => handleSend(inputText)}
@@ -228,7 +189,6 @@ export default function VoiceStudio() {
               </button>
             )}
 
-            {/* Mic button */}
             <button
               onMouseDown={() => !inputText.trim() && setIsRecording(true)}
               onMouseUp={() => isRecording && toggleRecording()}
@@ -245,7 +205,6 @@ export default function VoiceStudio() {
             </button>
           </div>
 
-          {/* Recording waveform */}
           {isRecording && (
             <div className="flex items-center justify-center gap-[2px] h-8 mt-4 animate-fade-up">
               {Array.from({ length: 40 }).map((_, i) => (

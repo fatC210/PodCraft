@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Plus, Play, Pause } from "lucide-react";
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 const mockPodcasts = [
   { id: 1, title: "量子计算前沿探索", duration: "5:32", date: "2026-03-23", status: "completed" as const },
@@ -28,17 +29,12 @@ function PodcastCard({ podcast, index }: { podcast: typeof mockPodcasts[0]; inde
       <p className="font-mono text-xs text-muted-foreground mb-4">{podcast.duration}</p>
 
       <div className="flex items-center gap-3">
-        {/* Mini waveform */}
         <div className="flex items-end gap-[2px] h-4 flex-1">
           {Array.from({ length: 24 }).map((_, i) => (
             <div
               key={i}
               className={`w-[2px] rounded-full transition-all duration-300 ${playing ? "bg-primary" : "bg-border group-hover:bg-muted-foreground/40"}`}
-              style={{
-                height: `${Math.random() * 100}%`,
-                minHeight: 2,
-                animationDelay: `${i * 50}ms`,
-              }}
+              style={{ height: `${Math.random() * 100}%`, minHeight: 2 }}
             />
           ))}
         </div>
@@ -55,12 +51,13 @@ function PodcastCard({ podcast, index }: { podcast: typeof mockPodcasts[0]; inde
 }
 
 export default function Index() {
+  const { t } = useI18n();
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      {/* Header */}
       <div className="flex items-end justify-between mb-12 animate-fade-up">
         <div>
-          <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-2">工作台</p>
+          <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-2">{t.index.workspace}</p>
           <h1 className="text-3xl font-bold tracking-tight text-balance">PodCraft</h1>
         </div>
         <Link
@@ -68,11 +65,10 @@ export default function Index() {
           className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded text-sm font-semibold hover:brightness-110 transition-all active:scale-[0.98]"
         >
           <Plus size={16} />
-          创建新播客
+          {t.index.createNew}
         </Link>
       </div>
 
-      {/* Active creation card */}
       <div className="mb-10 animate-fade-up" style={{ animationDelay: "100ms" }}>
         <Link
           to="/create"
@@ -80,19 +76,16 @@ export default function Index() {
         >
           <div className="flex items-center gap-3 mb-3">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse-amber" />
-            <span className="font-mono text-xs text-primary tracking-widest uppercase">准备就绪</span>
+            <span className="font-mono text-xs text-primary tracking-widest uppercase">{t.index.ready}</span>
           </div>
-          <h2 className="text-xl font-semibold mb-2">开始语音创作</h2>
-          <p className="text-sm text-muted-foreground max-w-md">
-            通过语音对话完成从素材搜集、脚本编写、音色选择到播客输出的全流程。
-          </p>
+          <h2 className="text-xl font-semibold mb-2">{t.index.startVoice}</h2>
+          <p className="text-sm text-muted-foreground max-w-md">{t.index.startVoiceDesc}</p>
         </Link>
       </div>
 
-      {/* Podcast grid */}
       <div className="mb-6">
         <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-4">
-          近期播客 — {mockPodcasts.length} 条记录
+          {t.index.recentPodcasts} — {mockPodcasts.length} {t.index.records}
         </p>
       </div>
 
@@ -102,11 +95,8 @@ export default function Index() {
         ))}
       </div>
 
-      {/* Footer */}
       <footer className="mt-16 pt-6 border-t border-border">
-        <p className="font-mono text-[10px] text-muted-foreground tracking-widest">
-          PODCRAFT v0.1 — STUDIO SYSTEM
-        </p>
+        <p className="font-mono text-[10px] text-muted-foreground tracking-widest">{t.index.footer}</p>
       </footer>
     </div>
   );

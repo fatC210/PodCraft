@@ -1,4 +1,5 @@
 import { Play, Trash2, Clock } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 const mockHistory = [
   { id: 1, title: "量子计算前沿探索", duration: "5:32", date: "2026-03-23", materials: 4, language: "中文" },
@@ -9,11 +10,13 @@ const mockHistory = [
 ];
 
 export default function History() {
+  const { t } = useI18n();
+
   return (
     <div className="p-8 max-w-4xl mx-auto">
       <div className="mb-10 animate-fade-up">
-        <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-2">历史记录</p>
-        <h1 className="text-2xl font-bold tracking-tight">播客档案</h1>
+        <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-2">{t.history.label}</p>
+        <h1 className="text-2xl font-bold tracking-tight">{t.history.title}</h1>
       </div>
 
       <div className="space-y-2">
@@ -33,7 +36,7 @@ export default function History() {
                 <span className="font-mono text-[11px] text-muted-foreground flex items-center gap-1">
                   <Clock size={10} /> {item.duration}
                 </span>
-                <span className="font-mono text-[11px] text-muted-foreground">{item.materials} 素材</span>
+                <span className="font-mono text-[11px] text-muted-foreground">{item.materials} {t.history.materials}</span>
                 <span className="font-mono text-[11px] text-muted-foreground">{item.language}</span>
               </div>
             </div>
@@ -49,7 +52,7 @@ export default function History() {
 
       <footer className="mt-16 pt-6 border-t border-border">
         <p className="font-mono text-[10px] text-muted-foreground tracking-widest">
-          共 {mockHistory.length} 条记录 — 本地存储
+          {t.history.footer(mockHistory.length)}
         </p>
       </footer>
     </div>

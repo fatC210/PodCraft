@@ -5,14 +5,12 @@ export type Locale = "zh" | "en";
 type Translations = typeof zh;
 
 const zh = {
-  // Sidebar
   nav: {
     workspace: "工作台",
     create: "创建",
     history: "历史",
     settings: "设置",
   },
-  // Index
   index: {
     workspace: "工作台",
     createNew: "创建新播客",
@@ -23,24 +21,26 @@ const zh = {
     records: "条记录",
     footer: "PODCRAFT v0.1 — STUDIO SYSTEM",
   },
-  // Voice Studio
   studio: {
     title: "语音创作工作台",
     stages: ["确定主题", "筛选素材", "生成脚本", "选择音色", "生成播客"],
     you: "你",
-    processing: "处理中",
-    recording: "● 录音中",
-    ready: "准备就绪",
-    inputPlaceholder: "输入文字消息，或按住麦克风说话…",
-    greeting: "你好！我是你的播客制作助手。请告诉我你想制作什么主题的播客？你可以按住麦克风按钮说话，也可以输入文字。",
+    processing: "思考中…",
+    listening: "聆听中…",
+    speaking: "AI 正在说话…",
+    connecting: "正在连接…",
+    endCall: "结束对话",
+    callDuration: "通话时长",
+    transcript: "对话记录",
+    greeting: "你好！我是你的播客制作助手。今天想做一期什么主题的播客呢？你可以随时开口说话，我会实时听你说。",
     mockVoiceInput: "我想做一期关于量子计算最新进展的播客",
     responses: {
-      default: `收到！让我为你搜索相关资料……已找到 3 条相关内容，我来逐一播报：\n\n**1.** 该领域最新研究进展综述，来源：Nature Science Review\n\n**2.** 行业专家访谈摘要，来源：Tech Insights Daily\n\n**3.** 相关技术应用案例分析，来源：MIT Technology Review\n\n你想保留哪些素材？可以说"保留第一条"或"跳过第二条"。`,
-      keep: `好的，已保留该素材。还有其他需要调整的吗？如果素材确认完毕，我们可以进入下一步——设置播客参数。`,
-      next: `素材已确认完毕。现在让我们设置播客参数：\n\n• **输出语言**：中文\n• **角色数量**：2 位\n• **角色名称**：待确认\n\n请告诉我角色名称，例如"主持人叫小明，嘉宾叫小红"。`,
-      script: `脚本已生成！以下是概要：\n\n**开场**（0:00-0:30）：主持人介绍本期主题\n**正文**（0:30-4:00）：围绕素材展开深入讨论\n**总结**（4:00-5:00）：回顾要点并展望\n\n总时长约 5 分钟。你想试听或修改脚本吗？`,
-      voice: `现在为角色选择音色。我为你准备了几个音色样本：\n\n🔊 **音色 1** — Roger：沉稳专业的男声\n🔊 **音色 2** — Sarah：温和清晰的女声\n🔊 **音色 3** — George：富有磁性的男声\n\n说"试听第一个"来预览，或直接选择。`,
-      generate: `所有参数已确认！开始合成播客音频……\n\n⏳ 正在处理脚本段落 1/6\n⏳ 正在合成角色语音\n⏳ 正在拼接音频片段\n\n预计需要 30 秒左右完成。`,
+      default: `收到！让我为你搜索量子计算相关的资料……已找到 3 条相关内容。第一条是该领域最新研究进展综述，来源 Nature Science Review。第二条是行业专家访谈摘要，来源 Tech Insights Daily。第三条是相关技术应用案例分析，来源 MIT Technology Review。你想保留哪些素材？`,
+      keep: `好的，已保留该素材。还有其他需要调整的吗？如果素材确认完毕，我们可以进入下一步，设置播客参数。`,
+      next: `素材已确认完毕。现在让我们设置播客参数。输出语言默认中文，角色数量 2 位。请告诉我角色名称，比如主持人叫什么，嘉宾叫什么？`,
+      script: `脚本已生成！总时长约 5 分钟。开场 30 秒由主持人介绍主题，正文约 3 分半围绕素材深入讨论，最后 1 分钟回顾要点。你想修改脚本还是直接继续？`,
+      voice: `现在为角色选择音色。我播放几个样本供你选择。第一个是 Roger，沉稳专业的男声。第二个是 Sarah，温和清晰的女声。第三个是 George，富有磁性的男声。你觉得哪个合适？`,
+      generate: `所有参数已确认！开始合成播客音频。正在处理脚本，合成语音，拼接片段。预计需要 30 秒左右完成。`,
     },
     keywords: {
       keep: ["保留"],
@@ -51,14 +51,12 @@ const zh = {
       topic: ["播客", "主题"],
     },
   },
-  // History
   history: {
     label: "历史记录",
     title: "播客档案",
     materials: "素材",
     footer: (n: number) => `共 ${n} 条记录 — 本地存储`,
   },
-  // Settings
   settings: {
     label: "设置",
     title: "系统配置",
@@ -100,19 +98,22 @@ const en: Translations = {
     title: "VOICE CREATION STUDIO",
     stages: ["Set Topic", "Select Material", "Generate Script", "Choose Voice", "Generate Podcast"],
     you: "You",
-    processing: "Processing",
-    recording: "● Recording",
-    ready: "Ready",
-    inputPlaceholder: "Type a message, or hold the mic to speak…",
-    greeting: "Hello! I'm your podcast production assistant. Tell me what topic you'd like to create a podcast about. You can hold the mic button to speak, or type your message.",
+    processing: "Thinking…",
+    listening: "Listening…",
+    speaking: "AI is speaking…",
+    connecting: "Connecting…",
+    endCall: "End Session",
+    callDuration: "Duration",
+    transcript: "Transcript",
+    greeting: "Hi! I'm your podcast production assistant. What kind of podcast would you like to create today? Just start talking — I'm listening in real time.",
     mockVoiceInput: "I want to make a podcast about the latest advances in quantum computing",
     responses: {
-      default: `Got it! Let me search for related materials… Found 3 relevant results, here's a summary:\n\n**1.** Latest research review in this field — Source: Nature Science Review\n\n**2.** Industry expert interview summary — Source: Tech Insights Daily\n\n**3.** Related technology application case study — Source: MIT Technology Review\n\nWhich materials would you like to keep? Say "keep the first one" or "skip the second".`,
+      default: `Got it! Let me search for materials on quantum computing. I found 3 relevant results. First, a latest research review from Nature Science Review. Second, an industry expert interview summary from Tech Insights Daily. Third, a technology application case study from MIT Technology Review. Which materials would you like to keep?`,
       keep: `OK, material has been kept. Anything else to adjust? If materials are confirmed, we can move to the next step — setting podcast parameters.`,
-      next: `Materials confirmed. Now let's set podcast parameters:\n\n• **Output Language**: Chinese\n• **Number of Roles**: 2\n• **Role Names**: To be confirmed\n\nPlease tell me the role names, e.g. "Host is Alex, Guest is Sam".`,
-      script: `Script generated! Here's a summary:\n\n**Opening** (0:00-0:30): Host introduces the topic\n**Main Content** (0:30-4:00): In-depth discussion around materials\n**Summary** (4:00-5:00): Key takeaways and outlook\n\nTotal duration ~5 minutes. Would you like to preview or edit the script?`,
-      voice: `Now let's choose voices for each role. Here are some voice samples:\n\n🔊 **Voice 1** — Roger: Deep, professional male voice\n🔊 **Voice 2** — Sarah: Warm, clear female voice\n🔊 **Voice 3** — George: Rich, magnetic male voice\n\nSay "preview the first one" to listen, or choose directly.`,
-      generate: `All parameters confirmed! Starting podcast synthesis…\n\n⏳ Processing script segment 1/6\n⏳ Synthesizing character voices\n⏳ Stitching audio clips\n\nEstimated time: ~30 seconds.`,
+      next: `Materials confirmed. Let's set podcast parameters. Output language defaults to Chinese, with 2 roles. Please tell me the role names — what should we call the host and the guest?`,
+      script: `Script generated! Total duration is about 5 minutes. The opening is 30 seconds with the host introducing the topic, main content is 3.5 minutes of in-depth discussion, and the closing is 1 minute of key takeaways. Would you like to edit the script or continue?`,
+      voice: `Now let's choose voices. I'll play a few samples. First is Roger — a deep, professional male voice. Second is Sarah — warm and clear female voice. Third is George — rich, magnetic male voice. Which one do you prefer?`,
+      generate: `All parameters confirmed! Starting podcast synthesis. Processing script, synthesizing voices, stitching clips. Estimated time: about 30 seconds.`,
     },
     keywords: {
       keep: ["keep", "保留"],

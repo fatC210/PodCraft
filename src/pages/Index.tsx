@@ -1,17 +1,25 @@
 import { Link } from "react-router-dom";
-import { Plus, Play, Pause } from "lucide-react";
-import { useState } from "react";
+import { Plus, Play, Pause, Mic, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
 import { useI18n } from "@/lib/i18n";
+import { fetchHistory, type PodcastHistoryItem } from "@/lib/api";
 
-const mockPodcasts = [
-  { id: 1, title: "量子计算前沿探索", duration: "5:32", date: "2026-03-23", status: "completed" as const },
-  { id: 2, title: "AI 在医疗领域的应用", duration: "8:15", date: "2026-03-22", status: "completed" as const },
-  { id: 3, title: "Web3 技术全景解读", duration: "3:47", date: "2026-03-21", status: "completed" as const },
-  { id: 4, title: "可持续能源新趋势", duration: "6:20", date: "2026-03-20", status: "completed" as const },
-];
-
-function PodcastCard({ podcast, index }: { podcast: typeof mockPodcasts[0]; index: number }) {
+function PodcastCard({ podcast, index }: { podcast: PodcastHistoryItem; index: number }) {
   const [playing, setPlaying] = useState(false);
+  const [audio] = useState(() => new Audio(podcast.audio_url));
+
+  audio.onended = () => setPlaying(false);
+
+  const togglePlay = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+    } else {
+      audio.play();
+      setPlaying(true);
+    }
+  };
 
   return (
     <div
@@ -34,13 +42,12 @@ function PodcastCard({ podcast, index }: { podcast: typeof mockPodcasts[0]; inde
             <div
               key={i}
               className={`w-[2px] rounded-full transition-all duration-300 ${playing ? "bg-primary" : "bg-border group-hover:bg-muted-foreground/40"}`}
-              style={{ height: `${Math.random() * 100}%`, minHeight: 2 }}
+              style={{ height: `${20 + Math.sin(i * 0.8) * 60 + 20}%`, minHeight: 2 }}
             />
           ))}
         </div>
-
         <button
-          onClick={(e) => { e.preventDefault(); setPlaying(!playing); }}
+          onClick={togglePlay}
           className="w-8 h-8 rounded-full border border-border flex items-center justify-center hover:border-primary hover:text-primary transition-colors active:scale-95"
         >
           {playing ? <Pause size={12} /> : <Play size={12} className="ml-0.5" />}
@@ -50,8 +57,29 @@ function PodcastCard({ podcast, index }: { podcast: typeof mockPodcasts[0]; inde
   );
 }
 
+function EmptyState({ t }: { t: any }) {
+  return (
+    <div className="col-span-full flex flex-col items-center justify-center py-20 text-center animate-fade-up">
+      <div className="w-16 h-16 rounded-full bg-surface-alt border border-border flex items-center justify-center mb-5">
+        <Mic size={24} className="text-muted-foreground/40" />
+      </div>
+      <p className="text-sm text-muted-foreground mb-1">{t.index.emptyTitle}</p>
+      <p className="font-mono text-xs text-muted-foreground/60">{t.index.emptyDesc}</p>
+    </div>
+  );
+}
+
 export default function Index() {
   const { t } = useI18n();
+  const [podcasts, setPodcasts] = useState<PodcastHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchHistory()
+      .then(setPodcasts)
+      .catch(() => setPodcasts([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -85,19 +113,24 @@ export default function Index() {
 
       <div className="mb-6">
         <p className="font-mono text-xs text-muted-foreground tracking-widest uppercase mb-4">
-          {t.index.recentPodcasts} — {mockPodcasts.length} {t.index.records}
+          {t.index.recentPodcasts}
+          {podcasts.length > 0 && ` — ${podcasts.length} ${t.index.records}`}
         </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {mockPodcasts.map((podcast, i) => (
-          <PodcastCard key={podcast.id} podcast={podcast} index={i} />
-        ))}
+        {loading ? (
+          <div className="col-span-full flex justify-center py-20">
+            <Loader2 size={24} className="animate-spin text-muted-foreground" />
+          </div>
+        ) : podcasts.length === 0 ? (
+          <EmptyState t={t} />
+        ) : (
+          podcasts.map((podcast, i) => (
+            <PodcastCard key={podcast.id} podcast={podcast} index={i} />
+          ))
+        )}
       </div>
-
-      <footer className="mt-16 pt-6 border-t border-border">
-        <p className="font-mono text-[10px] text-muted-foreground tracking-widest">{t.index.footer}</p>
-      </footer>
     </div>
   );
 }

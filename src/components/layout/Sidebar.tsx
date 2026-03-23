@@ -43,9 +43,6 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="font-mono text-[9px] text-muted-foreground tracking-widest rotate-180" style={{ writingMode: "vertical-lr" }}>
-        PODCRAFT v0.1
-      </div>
     </aside>
   );
 }

@@ -114,6 +114,16 @@
   50% { box-shadow: 0 0 30px hsl(43 100% 50% / 0.3); }
 }
 
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1); opacity: 0.3; }
+  50% { transform: scale(1.08); opacity: 0.6; }
+}
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
 .animate-fade-up {
   animation: fade-up 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }

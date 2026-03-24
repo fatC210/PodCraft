@@ -5,7 +5,8 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "mcp__ide__getDiagnostics",
       "Bash(./node_modules/.bin/tsc --noEmit 2>&1)",
-      "Bash(./node_modules/.bin/vite build:*)"
+      "Bash(./node_modules/.bin/vite build:*)",
+      "WebFetch(domain:elevenlabs.io)"
     ]
   }
 }

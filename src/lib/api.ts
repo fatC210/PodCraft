@@ -25,6 +25,7 @@ export type ServiceSettings = {
   assistant_voice_id?: string;
   content_model?: string;
   content_provider_id?: string;
+  stt_model?: string;
 };
 
 export type Provider = {
@@ -160,4 +161,22 @@ export function fetchPodcast(id: string): Promise<PodcastHistoryItem> {
 
 export function deleteHistoryItem(id: string): Promise<{ ok: boolean }> {
   return request(`/podcast/${id}`, { method: "DELETE" });
+}
+
+// ── Interrupted sessions ───────────────────────────────────────────────────────
+
+export type InterruptedSession = {
+  id: string;
+  title: string;
+  stage: number;
+  stage_name: string;
+  created_at: string;
+};
+
+export function fetchInterruptedSessions(): Promise<InterruptedSession[]> {
+  return request("/voice/interrupted");
+}
+
+export function deleteInterruptedSession(id: string): Promise<{ ok: boolean }> {
+  return request(`/voice/interrupted/${id}`, { method: "DELETE" });
 }

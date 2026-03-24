@@ -14,6 +14,7 @@ class ServicesUpdate(BaseModel):
     assistant_voice_id: Optional[str] = None
     content_model: Optional[str] = None
     content_provider_id: Optional[str] = None
+    stt_model: Optional[str] = None
 
 
 class ProviderCreate(BaseModel):
@@ -32,6 +33,7 @@ def get_settings_api():
         "assistant_voice_id": settings.get("assistant_voice_id", ""),
         "content_model": settings.get("content_model", ""),
         "content_provider_id": settings.get("content_provider_id", ""),
+        "stt_model": settings.get("stt_model", "scribe_v1"),
         "providers": [
             {
                 **p,
@@ -64,6 +66,8 @@ async def update_services(body: ServicesUpdate):
         data["content_model"] = body.content_model
     if body.content_provider_id is not None:
         data["content_provider_id"] = body.content_provider_id
+    if body.stt_model is not None:
+        data["stt_model"] = body.stt_model
     save_settings(data)
     return {"ok": True, "elevenlabs_verified": elevenlabs_verified}
 

@@ -1,12 +1,20 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from typing import Optional
 import asyncio
 import base64
 import json
 import uuid
+from datetime import datetime
 from services.elevenlabs import stt, tts
 from services.llm import chat
 from services.firecrawl import search
 from config import get_settings
+from database import (
+    save_interrupted_session,
+    get_interrupted_sessions,
+    get_interrupted_session_by_id,
+    delete_interrupted_session,
+)
 
 router = APIRouter()
 
@@ -34,6 +42,17 @@ SYSTEM_PROMPT = """你是 PodCraft 的 AI 播客制作助手。你帮助用户�
 回复要简洁，适合语音播报。"""
 
 STAGE_NAMES = ["确定主题", "筛选素材", "参数确认", "生成脚本", "选择音色", "生成播客"]
+
+# 对话语言名称 → ISO-639-1 代码（用于 STT language_code）
+LANGUAGE_CODE_MAP = {
+    "中文": "zh", "chinese": "zh", "mandarin": "zh",
+    "英文": "en", "english": "en",
+    "日文": "ja", "日语": "ja", "japanese": "ja",
+    "韩文": "ko", "韩语": "ko", "korean": "ko",
+    "法文": "fr", "法语": "fr", "french": "fr",
+    "德文": "de", "德语": "de", "german": "de",
+    "西班牙文": "es", "西班牙语": "es", "spanish": "es",
+}
 
 def _content_provider_and_model(settings: dict):
     """返回内容生成用的 (provider, model)，优先用设置页选定的供应商和模型"""
@@ -65,36 +84,104 @@ FOLLOW_UP_FALLBACKS = [
 ]
 
 
+def _extract_title(history: list) -> str:
+    """从对话历史中提取标题（第一条用户消息，截取前30字）"""
+    for msg in history:
+        if msg.get("role") == "user":
+            content = msg.get("content", "").strip()
+            if content:
+                return content[:30] + ("…" if len(content) > 30 else "")
+    return "未命名对话"
+
+
+# ── REST 端点：中断会话管理 ────────────────────────────────────────────────────
+
+@router.get("/api/voice/interrupted")
+def list_interrupted_sessions():
+    rows = get_interrupted_sessions()
+    return [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "stage": r["stage"],
+            "stage_name": STAGE_NAMES[min(r["stage"], len(STAGE_NAMES) - 1)],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/api/voice/interrupted/{session_id}")
+def remove_interrupted_session(session_id: str):
+    delete_interrupted_session(session_id)
+    return {"ok": True}
+
+
+# ── WebSocket ──────────────────────────────────────────────────────────────────
+
 @router.websocket("/api/voice/stream")
-async def voice_stream(websocket: WebSocket):
+async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(None)):
     await websocket.accept()
     session_id = str(uuid.uuid4())
-    sessions[session_id] = {
-        "stage": 0,
-        "history": [],  # [{role, content}]
-        "materials": [],
-        "params": {"language": "中文", "roles": []},
-        "voices": {},
-        "script": "",
-    }
-    session = sessions[session_id]
     settings = get_settings()
 
-    # 发送 session_id 和问候
-    await websocket.send_json({"type": "session_id", "session_id": session_id})
+    # 检查是否是恢复会话
+    if resume_id:
+        saved = get_interrupted_session_by_id(resume_id)
+        if saved:
+            sessions[session_id] = {
+                "stage": saved["stage"],
+                "history": json.loads(saved["history_json"]),
+                "materials": json.loads(saved["materials_json"]),
+                "params": json.loads(saved["params_json"]),
+                "voices": json.loads(saved["voices_json"]),
+                "script": saved.get("script", ""),
+                "ended_explicitly": False,
+            }
+            # 删除已恢复的中断记录
+            delete_interrupted_session(resume_id)
+            session = sessions[session_id]
+            await websocket.send_json({
+                "type": "session_id",
+                "session_id": session_id,
+            })
+            await websocket.send_json({
+                "type": "session_restored",
+                "stage": session["stage"],
+                "history": session["history"],
+            })
+        else:
+            # 找不到记录，当新会话处理
+            resume_id = None
 
-    greeting = "你好！我是你的播客制作助手。今天想做一期什么主题的播客呢？"
-    session["history"].append({"role": "assistant", "content": greeting})
-    await websocket.send_json({"type": "ai_text", "text": greeting, "stage": 0})
+    if not resume_id:
+        sessions[session_id] = {
+            "stage": 0,
+            "history": [],
+            "materials": [],
+            "params": {"language": "中文", "roles": []},
+            "voices": {},
+            "script": "",
+            "ended_explicitly": False,
+        }
+        session = sessions[session_id]
 
-    # TTS 问候语
-    try:
-        audio_bytes = await tts(greeting, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
-        audio_b64 = base64.b64encode(audio_bytes).decode()
-        await websocket.send_json({"type": "audio", "data": audio_b64})
-    except Exception as e:
-        await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
+        # 发送 session_id 和问候
+        await websocket.send_json({"type": "session_id", "session_id": session_id})
 
+        greeting = "你好！我是你的播客制作助手。今天想做一期什么主题的播客呢？"
+        session["history"].append({"role": "assistant", "content": greeting})
+        await websocket.send_json({"type": "ai_text", "text": greeting, "stage": 0})
+
+        # TTS 问候语
+        try:
+            audio_bytes = await tts(greeting, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
+            audio_b64 = base64.b64encode(audio_bytes).decode()
+            await websocket.send_json({"type": "audio", "data": audio_b64})
+        except Exception as e:
+            await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
+
+    session = sessions[session_id]
     audio_buffer = bytearray()
 
     try:
@@ -105,45 +192,53 @@ async def voice_stream(websocket: WebSocket):
                 break
 
             if "bytes" in message and message["bytes"]:
-                # 收到音频数据，加入缓冲区
                 audio_buffer.extend(message["bytes"])
 
             elif "text" in message and message["text"]:
                 data = json.loads(message["text"])
 
-                if data.get("type") == "end_speech":
-                    # 用户说完了，处理音频
+                if data.get("type") == "end_call":
+                    # 用户主动挂断，标记为显式结束
+                    session["ended_explicitly"] = True
+
+                elif data.get("type") == "end_speech":
                     if not audio_buffer:
                         continue
 
                     audio_data = bytes(audio_buffer)
                     audio_buffer.clear()
 
-                    # STT
                     try:
-                        transcript = await stt(audio_data, settings.get("elevenlabs_key", ""))
+                        lang_name = session["params"].get("language", "中文").lower()
+                        lang_code = LANGUAGE_CODE_MAP.get(lang_name, "zh")
+                        stt_model = settings.get("stt_model", "scribe_v1")
+                        transcript = await stt(audio_data, settings.get("elevenlabs_key", ""),
+                                               language_code=lang_code, model_id=stt_model)
                     except Exception as e:
                         await websocket.send_json({"type": "error", "message": f"STT 失败: {str(e)}"})
                         continue
 
-                    # 过滤空内容和噪音标记（如 "(background noise)"）
                     clean = transcript.strip()
-                    if not clean or (clean.startswith("(") and clean.endswith(")")):
+                    # 过滤空内容或纯括号注释（如 "(笑声)" "(music)" "(rire)" 等 STT 幻觉）
+                    import re as _re
+                    clean_no_parens = _re.sub(r'\([^)]*\)', '', clean).strip()
+                    if not clean or not clean_no_parens or (clean.startswith("(") and clean.endswith(")")):
                         await websocket.send_json({"type": "no_speech"})
                         continue
 
-                    await websocket.send_json({"type": "transcript", "text": transcript})
+                    # 去除行内括号噪声后作为实际文本使用
+                    clean_transcript = clean_no_parens
 
-                    session["history"].append({"role": "user", "content": transcript})
+                    await websocket.send_json({"type": "transcript", "text": clean_transcript})
 
-                    # 根据阶段处理
-                    ai_response = await handle_stage(session, transcript, settings, websocket)
+                    session["history"].append({"role": "user", "content": clean_transcript})
+
+                    ai_response = await handle_stage(session, clean_transcript, settings, websocket)
 
                     if ai_response:
                         session["history"].append({"role": "assistant", "content": ai_response})
                         await websocket.send_json({"type": "ai_text", "text": ai_response, "stage": session["stage"]})
 
-                        # TTS
                         try:
                             audio_bytes = await tts(ai_response, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
                             audio_b64 = base64.b64encode(audio_bytes).decode()
@@ -152,7 +247,6 @@ async def voice_stream(websocket: WebSocket):
                             await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
 
                 elif data.get("type") == "follow_up":
-                    # 用户长时间未回复，AI 主动跟进
                     attempt = data.get("attempt", 1)
                     print(f"[follow_up] 收到追问请求 attempt={attempt}", flush=True)
                     follow_up = await generate_follow_up(session, attempt, settings)
@@ -170,7 +264,25 @@ async def voice_stream(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        sessions.pop(session_id, None)
+        sess = sessions.pop(session_id, None)
+        # 如果不是主动挂断，且有用户发言记录，自动保存为中断会话
+        if sess and not sess.get("ended_explicitly", False):
+            has_user_msg = any(m.get("role") == "user" for m in sess.get("history", []))
+            if has_user_msg:
+                try:
+                    save_interrupted_session({
+                        "id": session_id,
+                        "title": _extract_title(sess["history"]),
+                        "stage": sess["stage"],
+                        "history_json": json.dumps(sess["history"], ensure_ascii=False),
+                        "materials_json": json.dumps(sess["materials"], ensure_ascii=False),
+                        "params_json": json.dumps(sess["params"], ensure_ascii=False),
+                        "voices_json": json.dumps(sess["voices"], ensure_ascii=False),
+                        "script": sess.get("script", ""),
+                        "created_at": datetime.now().isoformat(),
+                    })
+                except Exception as e:
+                    print(f"[interrupted] 保存��断会话失败: {e}", flush=True)
 
 
 async def handle_stage(session: dict, user_text: str, settings: dict, websocket: WebSocket) -> str:
@@ -187,7 +299,6 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
     messages = [{"role": "system", "content": system}] + session["history"][-10:]
 
     if stage == 0:
-        # 确定主题阶段：提取关键词并搜索
         if active_provider:
             response = await chat(
                 messages,
@@ -198,26 +309,43 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         else:
             response = "请先在设置页面配置 AI 模型供应商。"
 
-        # 尝试搜索
         try:
-            await websocket.send_json({"type": "ai_text", "text": "好的，我来搜索相关资料……", "stage": 0})
+            interim_text = "好的，我来搜索相关资料……"
+            await websocket.send_json({"type": "ai_text", "text": interim_text, "stage": 0})
+            try:
+                interim_audio = await tts(interim_text, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
+                await websocket.send_json({"type": "audio", "data": base64.b64encode(interim_audio).decode()})
+            except Exception:
+                pass
             firecrawl_key = settings.get("firecrawl_key", "")
             results = await search(user_text, firecrawl_key)
             session["materials"] = results
-            # 升级到阶段1
             session["stage"] = 1
             await websocket.send_json({"type": "stage_change", "stage": 1})
-            # 构建素材播报
+            # 发送素材数据供前端展示可点击链接
+            await websocket.send_json({
+                "type": "materials",
+                "items": [
+                    {
+                        "url": r.get("url", ""),
+                        "title": r.get("title", "未知标题"),
+                        "snippet": r.get("snippet", r.get("content", ""))[:200],
+                    }
+                    for r in results[:5]
+                ],
+            })
+            # AI 只朗读标题和概述，不读链接
             material_text = f"已找到 {len(results)} 条相关内容。"
             for i, r in enumerate(results[:3], 1):
-                material_text += f"第{i}条：{r.get('title', '未知标题')}。{r.get('snippet', '')[:80]}。"
-            material_text += '你想保留哪些素材？可以说「保留第1条」或「全部保留」。'
+                title = r.get("title", "未知标题")
+                snippet = r.get("snippet", r.get("content", ""))[:60]
+                material_text += f"第{i}条：{title}。{snippet}。"
+            material_text += "界面上可以点击查看原文。你想保留哪些素材？可以说「保留第1条」或「全部保留」。"
             return material_text
         except Exception:
             return response
 
     elif stage == 1:
-        # 筛选素材阶段
         if not active_provider:
             return "请先配置 AI 模型供应商。"
 
@@ -236,7 +364,6 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         return response
 
     elif stage == 2:
-        # 参数确认
         if not active_provider:
             return "请先配置 AI 模型供应商。"
 
@@ -255,13 +382,25 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         return response
 
     elif stage == 3:
-        # 生成脚本
         if not active_provider:
             return "请先配置 AI 模型供应商。"
 
-        keywords_confirm = ["好了", "确认", "没问题", "继续", "下一步", "选音色"]
+        keywords_confirm = ["好了", "确认", "没问题", "继续", "下一步", "选音色", "可以"]
         keywords_generate = ["生成脚本", "开始生成", "生成吧"]
+        keywords_read = ["朗读", "念一下", "读一读", "听一下", "听听", "念念", "读读"]
 
+        # 朗读脚本开头
+        if any(k in user_text for k in keywords_read) and session.get("script"):
+            opening = session["script"][:300].strip()
+            return f"好的，为你朗读脚本开头：{opening}……"
+
+        # 确认脚本���进入音色选择
+        if any(k in user_text for k in keywords_confirm) and session.get("script"):
+            session["stage"] = 4
+            await websocket.send_json({"type": "stage_change", "stage": 4})
+            return "脚本已确认！现在为每个角色选择音色，我们有多种音色可供选择。"
+
+        # 生成脚本（第一次进入或明确要求）
         if any(k in user_text for k in keywords_generate) or not session.get("script"):
             script_prompt = (
                 f"基于以下素材，生成一段播客对话脚本。\n"
@@ -276,17 +415,14 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
                 active_model,
             )
             session["script"] = script
+            # 发送脚本内容供前端展示，不通过语音朗读
+            await websocket.send_json({"type": "script_ready", "text": script})
             return (
-                f"脚本已生成！共约{len(script)}字。"
-                f"脚本概要：{script[:150]}..."
-                f"你觉得怎么样？需要修改还是直接选择音色？"
+                f"脚本已生成完毕，共约 {len(script)} 字，请在界面上查看完整内容。"
+                f"需要我朗读开头几段吗？如果满意，说「确认」即可进入音色选择。"
             )
 
-        if any(k in user_text for k in keywords_confirm):
-            session["stage"] = 4
-            await websocket.send_json({"type": "stage_change", "stage": 4})
-            return "脚本确认！现在为角色选择音色。我们有多种音色供选择，你想听几个样本吗？"
-
+        # 其他修改意见
         response = await chat(
             messages,
             active_provider["base_url"],
@@ -296,7 +432,6 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         return response
 
     elif stage == 4:
-        # 选择音色
         keywords_confirm = ["确认", "就用", "好的", "生成播客", "开始生成", "没问题", "下一步"]
         if any(k in user_text for k in keywords_confirm):
             session["stage"] = 5
@@ -352,7 +487,6 @@ async def generate_follow_up(session: dict, attempt: int, settings: dict) -> str
         return response
     except Exception as e:
         print(f"[follow_up] chat() 异常，使用兜底文案: {e}", flush=True)
-        # 兜底：按 attempt 轮换预设追问，避免 API 限速导致无追问
         bucket = FOLLOW_UP_FALLBACKS[(attempt - 1) % len(FOLLOW_UP_FALLBACKS)]
         stage_idx = min(stage, len(bucket) - 1)
         return bucket[stage_idx]

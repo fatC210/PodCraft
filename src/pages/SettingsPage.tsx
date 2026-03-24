@@ -76,6 +76,7 @@ export default function SettingsPage() {
   const modelListRef = useRef<HTMLDivElement>(null);
   const [elevenLabsKey, setElevenLabsKey] = useState("");
   const [elevenLabsKeySet, setElevenLabsKeySet] = useState(false);
+  const [sttModel, setSttModel] = useState("scribe_v1");
   const [firecrawlKey, setFirecrawlKey] = useState("");
   const [firecrawlKeySet, setFirecrawlKeySet] = useState(false);
   const [assistantVoiceId, setAssistantVoiceId] = useState("");
@@ -106,6 +107,7 @@ export default function SettingsPage() {
         setAssistantVoiceId(svc.assistant_voice_id ?? "");
         setContentModel(svc.content_model ?? "");
         setContentProviderId(svc.content_provider_id ?? "");
+        setSttModel(svc.stt_model ?? "scribe_v1");
         setProviders(provs ?? []);
         if (svc.elevenlabs_key) loadVoices();
       })
@@ -144,6 +146,12 @@ export default function SettingsPage() {
   const saveContentModel = async (model: string, providerId: string) => {
     try {
       await saveServiceSettings({ elevenlabs_key: "", firecrawl_key: "", content_model: model, content_provider_id: providerId });
+    } catch {}
+  };
+
+  const saveSttModel = async (model: string) => {
+    try {
+      await saveServiceSettings({ elevenlabs_key: "", firecrawl_key: "", stt_model: model });
     } catch {}
   };
 
@@ -722,6 +730,27 @@ export default function SettingsPage() {
                   </button>
                 </div>
               )}
+            </div>
+            {/* STT 模型选择 */}
+            <div className="mt-4">
+              <div className="mb-2">
+                <span className="text-xs text-muted-foreground">识别模型</span>
+              </div>
+              <div className="flex gap-2">
+                {(["scribe_v1", "scribe_v2"] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setSttModel(m); saveSttModel(m); }}
+                    className={`flex-1 py-2 rounded-md text-sm font-mono border transition-all ${
+                      sttModel === m
+                        ? "bg-primary/10 border-primary/40 text-primary"
+                        : "bg-background border-border text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

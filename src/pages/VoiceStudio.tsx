@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { fetchSettings, fetchVoices, type Voice } from "@/lib/api";
@@ -10,7 +10,8 @@ type AIState = "connecting" | "speaking" | "listening" | "thinking" | "generatin
 
 type RichContent =
   | { type: "voices"; voices: Voice[] }
-  | { type: "script"; text: string };
+  | { type: "script"; text: string }
+  | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> };
 
 type Message = {
   id: number;
@@ -22,10 +23,13 @@ type Message = {
 
 type WSMessage =
   | { type: "session_id"; session_id: string }
+  | { type: "session_restored"; stage: number; history: Array<{ role: string; content: string }> }
   | { type: "transcript"; text: string }
   | { type: "ai_text"; text: string; stage: number }
   | { type: "audio"; data: string }
   | { type: "stage_change"; stage: number }
+  | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> }
+  | { type: "script_ready"; text: string }
   | { type: "generating_podcast" }
   | { type: "podcast_done"; id: string; audio_url: string }
   | { type: "no_speech" }
@@ -151,10 +155,52 @@ function VoiceCards({ voices }: { voices: Voice[] }) {
 
 /** Script display card */
 function ScriptCard({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = text.slice(0, 300);
+  const hasMore = text.length > 300;
   return (
     <div className="mt-2 max-w-sm bg-background/60 border border-border rounded-lg p-3">
-      <p className="text-[10px] font-mono text-muted-foreground mb-1.5 uppercase tracking-wider">脚本预览</p>
-      <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">{text}</p>
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">脚本全文</p>
+        <span className="text-[10px] font-mono text-muted-foreground">{text.length} 字</span>
+      </div>
+      <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
+        {expanded ? text : preview}{hasMore && !expanded ? "…" : ""}
+      </p>
+      {hasMore && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="mt-2 text-[10px] font-mono text-primary hover:underline"
+        >
+          {expanded ? "收起" : "展开全部"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Search result materials card with clickable links */
+function MaterialsCard({ items }: { items: Array<{ url: string; title: string; snippet: string }> }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1.5 max-w-sm">
+      {items.map((item, i) => (
+        <a
+          key={i}
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-start gap-2 px-3 py-2 rounded-lg border border-border bg-background/50 hover:border-primary/40 hover:bg-primary/5 transition-all group"
+        >
+          <span className="flex-shrink-0 mt-0.5 w-4 h-4 rounded text-[9px] font-bold font-mono bg-muted text-muted-foreground flex items-center justify-center group-hover:bg-primary/20 group-hover:text-primary transition-colors">
+            {i + 1}
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-primary truncate group-hover:underline">{item.title}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">{item.snippet}</p>
+          </div>
+        </a>
+      ))}
     </div>
   );
 }
@@ -199,6 +245,9 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
         {isAI && msg.richContent?.type === "script" && (
           <ScriptCard text={msg.richContent.text} />
         )}
+        {isAI && msg.richContent?.type === "materials" && (
+          <MaterialsCard items={msg.richContent.items} />
+        )}
       </div>
 
       {!isAI && (
@@ -212,8 +261,11 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-const SILENCE_THRESHOLD = 0.01;
-const SILENCE_DURATION = 1200;
+const SILENCE_THRESHOLD = 0.02;
+const MIN_SPEAKING_FRAMES = 6; // ~100ms 持续语音才算真正发言，过滤背景噪音
+const SILENCE_DURATION = 500;
+// 打断检测：持续帧数要求（~170ms @60fps），避免笑声/掌声等短暂突发误触发
+const INTERRUPT_FRAMES_NEEDED = 10;
 
 function translateBackendError(msg: string, t: ReturnType<typeof useI18n>["t"]): string {
   if (msg.startsWith("TTS 失败:")) return `${t.studio.errTts}: ${msg.slice("TTS 失败:".length).trim()}`;
@@ -224,6 +276,8 @@ function translateBackendError(msg: string, t: ReturnType<typeof useI18n>["t"]):
 export default function VoiceStudio() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
+  const resumeId: string | undefined = (location.state as any)?.resumeId;
 
   const stages = t.studio.stages.map((label: string, i: number) => ({
     id: i + 1, label,
@@ -258,6 +312,7 @@ export default function VoiceStudio() {
   const pendingRichContent = useRef<RichContent | null>(null);
   const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followUpAttemptRef = useRef(0);
+  const interruptCheckingRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -293,6 +348,77 @@ export default function VoiceStudio() {
     followUpTimerRef.current = setTimeout(sendFollowUp, FOLLOW_UP_TIMEOUT);
   }, []);
 
+  // ── AI 打断 ───────────────────────────────────────────────────────────────
+
+  const interruptAI = useCallback(() => {
+    interruptCheckingRef.current = false;
+    if (audioSourceRef.current) {
+      audioSourceRef.current.onended = null;
+      try { audioSourceRef.current.stop(); } catch { /* already stopped */ }
+      audioSourceRef.current = null;
+    }
+    playQueueRef.current = [];
+    isPlayingRef.current = false;
+  }, []);
+
+  const startInterruptMonitor = useCallback(() => {
+    if (interruptCheckingRef.current) return;
+    interruptCheckingRef.current = true;
+    let speechFrames = 0;
+
+    const check = () => {
+      if (!interruptCheckingRef.current || !isPlayingRef.current || isPausedRef.current || isMuted) {
+        interruptCheckingRef.current = false;
+        speechFrames = 0;
+        return;
+      }
+      const analyser = analyserRef.current;
+      const ctx = audioContextRef.current;
+      if (!analyser || !ctx) { interruptCheckingRef.current = false; return; }
+
+      // 用频域检测人声，而非宽带 RMS（避免音乐/笑声误触发）
+      const freqData = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(freqData);
+
+      const binWidth = ctx.sampleRate / analyser.fftSize;
+
+      // 人声主要频段：200-3500 Hz（基音 + 共振峰）
+      const sLow  = Math.round(200  / binWidth);
+      const sHigh = Math.round(3500 / binWidth);
+      // 高频段：4000-8000 Hz（音乐/噪声往往在此更突出）
+      const hLow  = Math.round(4000 / binWidth);
+      const hHigh = Math.min(Math.round(8000 / binWidth), freqData.length - 1);
+
+      let speechSum = 0;
+      for (let i = sLow; i < sHigh; i++) speechSum += freqData[i];
+      const speechAvg = speechSum / (sHigh - sLow);
+
+      let highSum = 0;
+      for (let i = hLow; i < hHigh; i++) highSum += freqData[i];
+      const highAvg = hHigh > hLow ? highSum / (hHigh - hLow) : 0;
+
+      // 判断为语音：人声频段有足够能量 且 高频能量不超过人声（排除音乐/噪声）
+      const isSpeechLike = speechAvg > 40 && speechAvg > highAvg * 1.3;
+
+      if (isSpeechLike) {
+        speechFrames++;
+        if (speechFrames >= INTERRUPT_FRAMES_NEEDED) {
+          speechFrames = 0;
+          interruptAI();
+          if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+          setAIState("listening");
+          return;
+        }
+      } else {
+        // 衰减：非语音帧不立即归零，给一点容忍窗口
+        speechFrames = Math.max(0, speechFrames - 2);
+      }
+
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  }, [interruptAI, isMuted]);
+
   const playNextAudio = useCallback(async () => {
     if (isPlayingRef.current || playQueueRef.current.length === 0) return;
     const b64 = playQueueRef.current.shift()!;
@@ -322,13 +448,14 @@ export default function VoiceStudio() {
         }
       };
       source.start();
+      startInterruptMonitor();
     } catch {
       isPlayingRef.current = false;
       audioSourceRef.current = null;
       setAIState("listening");
       startFollowUpTimer();
     }
-  }, [startFollowUpTimer]);
+  }, [startFollowUpTimer, startInterruptMonitor]);
 
   const enqueueAudio = useCallback((b64: string) => {
     if (isPausedRef.current) return;
@@ -340,7 +467,8 @@ export default function VoiceStudio() {
 
   const connectWebSocket = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = `${protocol}://localhost:8000/api/voice/stream`;
+    const base = `${protocol}://localhost:8000/api/voice/stream`;
+    const wsUrl = resumeId ? `${base}?resume_id=${resumeId}` : base;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -355,9 +483,29 @@ export default function VoiceStudio() {
         switch (msg.type) {
           case "session_id":
             break;
+          case "session_restored": {
+            // 恢复历史消息并设置阶段
+            setCurrentStage(msg.stage);
+            const restored: Message[] = msg.history.map((h) => ({
+              id: msgId.current++,
+              role: h.role === "user" ? "user" : "ai",
+              content: h.content,
+              timestamp: nowTimestamp(),
+            }));
+            setMessages(restored);
+            scrollToBottom();
+            // 播报恢复提示
+            const resumeNotice: Message = {
+              id: msgId.current++,
+              role: "ai",
+              content: "欢迎回来！我们继续上次的对话。",
+              timestamp: nowTimestamp(),
+            };
+            setMessages(prev => [...prev, resumeNotice]);
+            break;
+          }
           case "transcript":
             addMessage("user", msg.text);
-            // User spoke — reset follow-up counter and clear pending timer
             followUpAttemptRef.current = 0;
             if (followUpTimerRef.current) {
               clearTimeout(followUpTimerRef.current);
@@ -365,7 +513,6 @@ export default function VoiceStudio() {
             }
             break;
           case "ai_text": {
-            // AI 开始回复，清除 follow-up 计时器（音频播完后会重新启动）
             if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
             const rich = pendingRichContent.current ?? undefined;
             pendingRichContent.current = null;
@@ -377,10 +524,16 @@ export default function VoiceStudio() {
           case "audio":
             enqueueAudio(msg.data);
             break;
+          case "materials":
+            pendingRichContent.current = { type: "materials", items: msg.items };
+            break;
+          case "script_ready":
+            pendingRichContent.current = { type: "script", text: msg.text };
+            break;
           case "stage_change":
             setCurrentStage(msg.stage);
             // Voice selection stage: pre-fetch voices to attach as rich content
-            if (msg.stage === 3) {
+            if (msg.stage === 4) {
               fetchVoices()
                 .then(voices => { pendingRichContent.current = { type: "voices", voices }; })
                 .catch(() => {});
@@ -393,7 +546,6 @@ export default function VoiceStudio() {
             setAIState("listening");
             break;
           case "no_speech":
-            // 噪音或无效语音，切回聆听，不打断 follow-up 计时器
             setAIState("listening");
             break;
           case "error":
@@ -414,24 +566,35 @@ export default function VoiceStudio() {
     ws.onclose = () => {
       setAIState("connecting");
     };
-  }, [addMessage, enqueueAudio]);
+  }, [addMessage, enqueueAudio, scrollToBottom, resumeId]);
 
   // ── Microphone & VAD ──────────────────────────────────────────────────────
 
   const startRecording = useCallback(async () => {
     if (isMuted || isRecording) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
+      // 复用已有的麦克风流，避免重复申请权限
+      let stream = streamRef.current;
+      if (!stream || stream.getTracks().some(t => t.readyState === "ended")) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        streamRef.current = stream;
+        // 只在首次创建时设置 AudioContext 和 AnalyserNode
+        const ctx = audioContextRef.current ?? new AudioContext();
+        audioContextRef.current = ctx;
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      }
 
-      const ctx = audioContextRef.current ?? new AudioContext();
-      audioContextRef.current = ctx;
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
+      const analyser = analyserRef.current!;
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
@@ -440,10 +603,11 @@ export default function VoiceStudio() {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
-      recorder.start(100);
+      recorder.start(50);
       setIsRecording(true);
       isRecordingRef.current = true;
       isSpeakingRef.current = false;
+      let speakingFrames = 0;
 
       const checkSilence = () => {
         if (!analyserRef.current) return;
@@ -452,12 +616,16 @@ export default function VoiceStudio() {
         const rms = Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
 
         if (rms > SILENCE_THRESHOLD) {
-          isSpeakingRef.current = true;
+          speakingFrames++;
+          if (speakingFrames >= MIN_SPEAKING_FRAMES) {
+            isSpeakingRef.current = true;
+          }
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
           }
         } else if (isSpeakingRef.current) {
+          speakingFrames = 0;
           if (!silenceTimerRef.current) {
             silenceTimerRef.current = setTimeout(() => {
               sendAudio();
@@ -503,10 +671,16 @@ export default function VoiceStudio() {
 
   const stopAll = useCallback(() => {
     mediaRecorderRef.current?.stop();
-    streamRef.current?.getTracks().forEach(t => t.stop());
+    // 保留 stream 以便打断监听继续工作；完全销毁由 stopStream 负责
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     setIsRecording(false);
     isRecordingRef.current = false;
+  }, []);
+
+  const stopStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    analyserRef.current = null;
   }, []);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -515,6 +689,8 @@ export default function VoiceStudio() {
     connectWebSocket();
     return () => {
       stopAll();
+      stopStream();
+      interruptCheckingRef.current = false;
       if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
       wsRef.current?.close();
     };
@@ -549,11 +725,17 @@ export default function VoiceStudio() {
   }, [isPaused]);
 
   const handleEndCall = useCallback(() => {
+    interruptCheckingRef.current = false;
     stopAll();
+    stopStream();
     if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "end_call" }));
+    }
     wsRef.current?.close();
     navigate("/");
-  }, [stopAll, navigate]);
+  }, [stopAll, stopStream, navigate]);
 
   const toggleMute = useCallback(() => {
     setIsMuted(prev => {

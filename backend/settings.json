@@ -1,5 +1,5 @@
 {
-  "elevenlabs_key": "gAAAAABpwk3WLH0GO5Q8K6J4DgPW9bbGAn0EgXdCdbwBNdqYLa_M_J61GwmrZOjeO7dbzRif0d5vNsWWEt-ityRYH5QR5JnlsuHyXuWXLRNXlm8dkp96dYwGbM3kIzW21yGF3XZyTnc7GfQN1R0dEQdeDR2M1N37nw==",
+  "elevenlabs_key": "gAAAAABpwm1zI6fzsRdQph416V0BHnsIwbZWwB1zMM_MFK-gilkiODxDmdyp0eyyjv5JGrTZPMbM9vZU9iKGiyVk-f4SOM65_SsMcXFyyzWRJHKqSmVIzSxUDroyHIqa5jm0gc-XtZw7obkEg_4kAkMveBw5mqbvDA==",
   "firecrawl_key": "gAAAAABpwk3W8V5W9Zb4u-3bQAYm9Ff_s4_DsrASETSlHDo_8ynrBb6qQ02QQtD9jgBYYtvtqzvH-1JVficc0RlG_eopKBxbOWT4kjuudmLCq-4tfHxzZJgIbDq8aNjWh2mVxnvQHbfs",
   "providers": [
     {
@@ -1052,7 +1052,7 @@
       "active": false
     }
   ],
-  "assistant_voice_id": "cjVigY5qzO86Huf0OWal",
+  "assistant_voice_id": "TX3LPaxmHKxFdv7VOQHJ",
   "content_model": "gpt-5.4",
   "content_provider_id": "6691daaf-e773-4268-ad16-c672b97bb75b"
 }

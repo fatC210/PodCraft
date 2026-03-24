@@ -122,6 +122,8 @@ export default function SettingsPage() {
         assistant_voice_id: voiceId ?? assistantVoiceId,
       });
       if (result.elevenlabs_verified === false) {
+        setVoices([]);
+        setVoicesError("");
         setSaveMsg(t.settings.verifyFailed);
       } else {
         if (result.elevenlabs_verified === true) {

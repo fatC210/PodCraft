@@ -55,9 +55,10 @@ def get_settings() -> dict:
     else:
         result["firecrawl_key"] = ""
 
-    # assistant_voice_id / content_model（明文存储）
+    # assistant_voice_id / content_model / content_provider_id（明文存储）
     result["assistant_voice_id"] = raw.get("assistant_voice_id", "")
     result["content_model"] = raw.get("content_model", "")
+    result["content_provider_id"] = raw.get("content_provider_id", "")
 
     # 解密 providers
     providers = []
@@ -95,6 +96,9 @@ def save_settings(data: dict):
 
     if "content_model" in data:
         to_save["content_model"] = data["content_model"]
+
+    if "content_provider_id" in data:
+        to_save["content_provider_id"] = data["content_provider_id"]
 
     if "providers" in data:
         encrypted_providers = []

@@ -529,12 +529,13 @@ export default function VoiceStudio() {
 
   // ── Follow-up timer (3 min silence → AI re-prompts) ───────────────────────
 
-  const FOLLOW_UP_TIMEOUT = 20 * 1000; // 20秒无回复则追问
+  const FOLLOW_UP_TIMEOUT = 60 * 1000; // 60秒无回复则追问
 
   const sendFollowUp = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     followUpAttemptRef.current += 1;
+    console.log(`[follow_up] 前端发送追问 attempt=${followUpAttemptRef.current}`);
     ws.send(JSON.stringify({ type: "follow_up", attempt: followUpAttemptRef.current }));
     // Schedule next follow-up
     followUpTimerRef.current = setTimeout(sendFollowUp, FOLLOW_UP_TIMEOUT);

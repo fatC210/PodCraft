@@ -62,7 +62,7 @@ async def chat_stream(
 async def list_models(base_url: str, api_key: str) -> list:
     """获取 provider 的可用模型列表"""
     base_url = base_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(
             f"{base_url}/models",
             headers={"Authorization": f"Bearer {api_key}"},

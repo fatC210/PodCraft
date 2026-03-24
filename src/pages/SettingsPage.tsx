@@ -181,7 +181,8 @@ export default function SettingsPage() {
     } catch (e: unknown) {
       let msg = t.settings.verifyFailed;
       if (e instanceof Error) {
-        try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; }
+        if (e.name === "AbortError") { msg = `✗ 连接超时，请检查供应商地址是否可访问`; }
+        else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
       }
       setProviderMsg(msg);
     } finally {
@@ -261,7 +262,8 @@ export default function SettingsPage() {
     } catch (e: unknown) {
       let msg = t.settings.verifyFailed;
       if (e instanceof Error) {
-        try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; }
+        if (e.name === "AbortError") { msg = `✗ 连接超时，请检查供应商地址是否可访问`; }
+        else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
       }
       setProviderMsg(msg);
     } finally {

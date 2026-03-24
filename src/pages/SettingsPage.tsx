@@ -116,14 +116,21 @@ export default function SettingsPage() {
   const doSave = async (voiceId?: string) => {
     setSaving(true);
     try {
-      await saveServiceSettings({
+      const result = await saveServiceSettings({
         elevenlabs_key: elevenLabsKey,
         firecrawl_key: firecrawlKey,
         assistant_voice_id: voiceId ?? assistantVoiceId,
       });
-      if (elevenLabsKey) { setElevenLabsKeySet(true); loadVoices(); }
-      if (firecrawlKey) setFirecrawlKeySet(true);
-      setSaveMsg(t.settings.savedOk);
+      if (result.elevenlabs_verified === false) {
+        setSaveMsg(t.settings.verifyFailed);
+      } else {
+        if (result.elevenlabs_verified === true) {
+          setElevenLabsKeySet(true);
+          loadVoices();
+        }
+        if (firecrawlKey) setFirecrawlKeySet(true);
+        setSaveMsg(t.settings.savedOk);
+      }
     } catch {
       setSaveMsg(t.settings.savedError);
     } finally {

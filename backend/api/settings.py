@@ -43,11 +43,19 @@ def get_settings_api():
 
 
 @router.put("/api/settings/services")
-def update_services(body: ServicesUpdate):
+async def update_services(body: ServicesUpdate):
     data = {}
+    elevenlabs_verified = None
     # 只在 key 非空且不含掩码字符时才更新
     if body.elevenlabs_key and "\u2022" not in body.elevenlabs_key:
-        data["elevenlabs_key"] = body.elevenlabs_key
+        # 验证 ElevenLabs key 有效性
+        try:
+            from services.elevenlabs import list_voices
+            await list_voices(body.elevenlabs_key)
+            data["elevenlabs_key"] = body.elevenlabs_key
+            elevenlabs_verified = True
+        except Exception:
+            elevenlabs_verified = False
     if body.firecrawl_key and "\u2022" not in body.firecrawl_key:
         data["firecrawl_key"] = body.firecrawl_key
     if body.assistant_voice_id is not None:
@@ -57,7 +65,7 @@ def update_services(body: ServicesUpdate):
     if body.content_provider_id is not None:
         data["content_provider_id"] = body.content_provider_id
     save_settings(data)
-    return {"ok": True}
+    return {"ok": True, "elevenlabs_verified": elevenlabs_verified}
 
 
 @router.get("/api/settings/providers")

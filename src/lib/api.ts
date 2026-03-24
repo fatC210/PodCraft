@@ -40,7 +40,7 @@ export function fetchSettings(): Promise<ServiceSettings> {
   return request("/settings");
 }
 
-export function saveServiceSettings(data: ServiceSettings): Promise<{ ok: boolean }> {
+export function saveServiceSettings(data: ServiceSettings): Promise<{ ok: boolean; elevenlabs_verified?: boolean | null }> {
   return request("/settings/services", { method: "PUT", body: JSON.stringify(data) });
 }
 

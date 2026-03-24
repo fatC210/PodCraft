@@ -34,7 +34,7 @@ async def generate_script(body: GenerateScriptRequest):
         f"素材：{json.dumps(body.materials[:5], ensure_ascii=False)}\n"
         f"参数：{json.dumps(body.params, ensure_ascii=False)}\n"
         f"要求：根据 params 中的 roles 列表设置角色，"
-        f"对话自然流畅，约5分钟（约800字），格式为"角色名：台词"。"
+        f'对话自然流畅，约5分钟（约800字），格式为"角色名:台词"。'
         f"只输出脚本内容，不要额外说明。"
     )
 

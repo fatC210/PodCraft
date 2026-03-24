@@ -10,6 +10,11 @@ from config import get_settings
 
 router = APIRouter()
 
+DEFAULT_ASSISTANT_VOICE = "21m00Tcm4TlvDq8ikWAM"
+
+def _assistant_voice(settings: dict) -> str:
+    return settings.get("assistant_voice_id") or DEFAULT_ASSISTANT_VOICE
+
 # 内存 session 存储
 sessions: dict = {}
 
@@ -55,7 +60,7 @@ async def voice_stream(websocket: WebSocket):
 
     # TTS 问候语
     try:
-        audio_bytes = await tts(greeting, "21m00Tcm4TlvDq8ikWAM", settings.get("elevenlabs_key", ""))
+        audio_bytes = await tts(greeting, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
         audio_b64 = base64.b64encode(audio_bytes).decode()
         await websocket.send_json({"type": "audio", "data": audio_b64})
     except Exception as e:
@@ -88,13 +93,17 @@ async def voice_stream(websocket: WebSocket):
                     # STT
                     try:
                         transcript = await stt(audio_data, settings.get("elevenlabs_key", ""))
-                        await websocket.send_json({"type": "transcript", "text": transcript})
                     except Exception as e:
                         await websocket.send_json({"type": "error", "message": f"STT 失败: {str(e)}"})
                         continue
 
-                    if not transcript.strip():
+                    # 过滤空内容和噪音标记（如 "(background noise)"）
+                    clean = transcript.strip()
+                    if not clean or (clean.startswith("(") and clean.endswith(")")):
+                        await websocket.send_json({"type": "no_speech"})
                         continue
+
+                    await websocket.send_json({"type": "transcript", "text": transcript})
 
                     session["history"].append({"role": "user", "content": transcript})
 
@@ -107,7 +116,21 @@ async def voice_stream(websocket: WebSocket):
 
                         # TTS
                         try:
-                            audio_bytes = await tts(ai_response, "21m00Tcm4TlvDq8ikWAM", settings.get("elevenlabs_key", ""))
+                            audio_bytes = await tts(ai_response, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
+                            audio_b64 = base64.b64encode(audio_bytes).decode()
+                            await websocket.send_json({"type": "audio", "data": audio_b64})
+                        except Exception as e:
+                            await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
+
+                elif data.get("type") == "follow_up":
+                    # 用户长时间未回复，AI 主动跟进
+                    attempt = data.get("attempt", 1)
+                    follow_up = await generate_follow_up(session, attempt, settings)
+                    if follow_up:
+                        session["history"].append({"role": "assistant", "content": follow_up})
+                        await websocket.send_json({"type": "ai_text", "text": follow_up, "stage": session["stage"]})
+                        try:
+                            audio_bytes = await tts(follow_up, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
                             audio_b64 = base64.b64encode(audio_bytes).decode()
                             await websocket.send_json({"type": "audio", "data": audio_b64})
                         except Exception as e:
@@ -158,7 +181,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
             material_text = f"已找到 {len(results)} 条相关内容。"
             for i, r in enumerate(results[:3], 1):
                 material_text += f"第{i}条：{r.get('title', '未知标题')}。{r.get('snippet', '')[:80]}。"
-            material_text += "你想保留哪些素材？可以说"保留第1条"或"全部保留"。"
+            material_text += '你想保留哪些素材？可以说「保留第1条」或「全部保留」。'
             return material_text
         except Exception:
             return response
@@ -172,7 +195,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         if any(k in user_text for k in keywords_next):
             session["stage"] = 2
             await websocket.send_json({"type": "stage_change", "stage": 2})
-            return "素材确认完毕！现在设置播客参数。输出语言默认中文，请告诉我角色数量和名字，比如"主持人叫小明，嘉宾叫小红"。"
+            return '素材确认完毕！现在设置播客参数。输出语言默认中文，请告诉我角色数量和名字，比如「主持人叫小明，嘉宾叫小红」。'
 
         response = await chat(
             messages,
@@ -214,7 +237,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
                 f"基于以下素材，生成一段播客对话脚本。\n"
                 f"素材：{json.dumps(session['materials'][:3], ensure_ascii=False)}\n"
                 f"参数：{json.dumps(session['params'], ensure_ascii=False)}\n"
-                f"要求：2个角色对话，自然流畅，约5分钟（约800字），格式为"角色名：台词"。"
+                f'要求：2个角色对话，自然流畅，约5分钟（约800字），格式为「角色名：台词」。'
             )
             script = await chat(
                 [{"role": "user", "content": script_prompt}],
@@ -232,7 +255,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         if any(k in user_text for k in keywords_confirm):
             session["stage"] = 4
             await websocket.send_json({"type": "stage_change", "stage": 4})
-            return "脚本确认！现在为角色选��音色。我们有多种音色供选择，你想听几个样本吗？"
+            return "脚本确认！现在为角色选择音色。我们有多种音色供选择，你想听几个样本吗？"
 
         response = await chat(
             messages,
@@ -265,3 +288,38 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
         return "播客正在生成中，请稍候……"
 
     return "请继续。"
+
+
+async def generate_follow_up(session: dict, attempt: int, settings: dict) -> str:
+    """用户长时间无回复时，根据阶段和历史生成跟进问题"""
+    providers = settings.get("providers", [])
+    active_provider = next((p for p in providers if p.get("active")), providers[0] if providers else None)
+    if not active_provider:
+        return None
+
+    stage = session["stage"]
+    stage_name = STAGE_NAMES[min(stage, len(STAGE_NAMES) - 1)]
+    last_ai = next((m["content"] for m in reversed(session["history"]) if m["role"] == "assistant"), "")
+
+    prompt = f"""用户在语音播客制作助手对话中停止了回复，已等待超过3分钟。
+当前阶段：{stage_name}
+最近一条AI消息：{last_ai[:300]}
+这是第{attempt}次跟进询问。
+
+请生成一条简短的跟进消息（不超过35字，适合语音播报），从不同角度猜测用户可能遇到的问题：
+- 第1次：温和地询问是否有疑问或需要帮助
+- 第2次：猜测用户对当前阶段某个具体细节感到困惑，提出一个具体猜测
+- 第3次及以后：换一个全新角度，比如询问是否需要换个思路，或是否有技术问题等
+
+注意：每次问题角度必须不同，语气自然亲切。只输出一句话，不加任何解释。"""
+
+    try:
+        response = await chat(
+            [{"role": "user", "content": prompt}],
+            active_provider["base_url"],
+            active_provider["api_key"],
+            active_provider.get("models", ["gpt-4o"])[0],
+        )
+        return response
+    except Exception:
+        return None

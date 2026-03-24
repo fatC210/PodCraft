@@ -107,7 +107,7 @@ export default function Index() {
             <span className="font-mono text-xs text-primary tracking-widest uppercase">{t.index.ready}</span>
           </div>
           <h2 className="text-xl font-semibold mb-2">{t.index.startVoice}</h2>
-          <p className="text-sm text-muted-foreground max-w-md">{t.index.startVoiceDesc}</p>
+          <p className="text-sm text-muted-foreground whitespace-nowrap">{t.index.startVoiceDesc}</p>
         </Link>
       </div>
 

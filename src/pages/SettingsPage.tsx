@@ -1,13 +1,17 @@
-import { useState, useEffect } from "react";
-import { Plus, Trash2, Check, ExternalLink, ChevronDown, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Plus, Trash2, Check, ExternalLink, ChevronDown, Eye, EyeOff, Loader2, Pencil, Zap, Play, Square, RefreshCw, Search } from "lucide-react";
 import { useI18n, Locale } from "@/lib/i18n";
 import {
   fetchSettings,
   saveServiceSettings,
   fetchProviders,
   saveProvider,
+  updateProvider,
+  activateProvider,
   deleteProvider,
+  fetchVoices,
   type Provider,
+  type Voice,
 } from "@/lib/api";
 
 function SectionTitle({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -44,7 +48,7 @@ function InputField({
         placeholder={placeholder}
         type={isPassword && !show ? "password" : "text"}
         disabled={disabled}
-        className={`w-full bg-background border border-border rounded-md px-4 py-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50 ${mono ? "font-mono" : ""}`}
+        className={`w-full bg-background border border-border rounded-md px-4 py-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50 ${isPassword ? "pr-10" : ""} ${mono ? "font-mono" : ""}`}
       />
       {isPassword && (
         <button
@@ -63,76 +67,218 @@ export default function SettingsPage() {
   const { t, locale, setLocale } = useI18n();
 
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [contentModel, setContentModel] = useState("");
+  const [contentProviderId, setContentProviderId] = useState("");
+  const [modelOpen, setModelOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelProvId, setModelProvId] = useState<string | null>(null);
+  const modelDropRef = useRef<HTMLDivElement>(null);
+  const modelListRef = useRef<HTMLDivElement>(null);
   const [elevenLabsKey, setElevenLabsKey] = useState("");
+  const [elevenLabsKeySet, setElevenLabsKeySet] = useState(false);
   const [firecrawlKey, setFirecrawlKey] = useState("");
+  const [firecrawlKeySet, setFirecrawlKeySet] = useState(false);
+  const [assistantVoiceId, setAssistantVoiceId] = useState("");
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voicesError, setVoicesError] = useState("");
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newProvider, setNewProvider] = useState({ name: "", base_url: "", api_key: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
+  const [editForm, setEditForm] = useState({ name: "", base_url: "", api_key: "" });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerMsg, setProviderMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initializedRef = useRef(false);
 
   // Load settings from backend on mount
   useEffect(() => {
     Promise.all([fetchSettings(), fetchProviders()])
       .then(([svc, provs]) => {
-        setElevenLabsKey(svc.elevenlabs_key ?? "");
-        setFirecrawlKey(svc.firecrawl_key ?? "");
+        setElevenLabsKeySet(!!svc.elevenlabs_key);
+        setFirecrawlKeySet(!!svc.firecrawl_key);
+        setAssistantVoiceId(svc.assistant_voice_id ?? "");
+        setContentModel(svc.content_model ?? "");
+        setContentProviderId(svc.content_provider_id ?? "");
         setProviders(provs ?? []);
+        if (svc.elevenlabs_key) loadVoices();
       })
-      .catch(() => {
-        // Backend not available yet, work offline
-      })
-      .finally(() => setLoading(false));
+      .catch(() => {})
+      .finally(() => { setLoading(false); initializedRef.current = true; });
   }, []);
 
-  const handleSaveServices = async () => {
+  const doSave = async (voiceId?: string) => {
     setSaving(true);
     try {
-      await saveServiceSettings({ elevenlabs_key: elevenLabsKey, firecrawl_key: firecrawlKey });
+      await saveServiceSettings({
+        elevenlabs_key: elevenLabsKey,
+        firecrawl_key: firecrawlKey,
+        assistant_voice_id: voiceId ?? assistantVoiceId,
+      });
+      if (elevenLabsKey) { setElevenLabsKeySet(true); loadVoices(); }
+      if (firecrawlKey) setFirecrawlKeySet(true);
       setSaveMsg(t.settings.savedOk);
     } catch {
       setSaveMsg(t.settings.savedError);
     } finally {
       setSaving(false);
-      setTimeout(() => setSaveMsg(""), 3000);
+      setTimeout(() => setSaveMsg(""), 2500);
     }
   };
 
+  const saveContentModel = async (model: string, providerId: string) => {
+    try {
+      await saveServiceSettings({ elevenlabs_key: "", firecrawl_key: "", content_model: model, content_provider_id: providerId });
+    } catch {}
+  };
+
+  // 点击 model 下拉外部时关闭
+  useEffect(() => {
+    if (!modelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (modelDropRef.current && !modelDropRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [modelOpen]);
+
+  // 下拉打开时滚动到选中模型
+  useEffect(() => {
+    if (!modelOpen) return;
+    requestAnimationFrame(() => {
+      const el = modelListRef.current?.querySelector("[data-selected='true']") as HTMLElement | null;
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }, [modelOpen]);
+
+  // 自动保存：key 输入停止 800ms 后触发
+  useEffect(() => {    if (!initializedRef.current) return;
+    if (!elevenLabsKey && !firecrawlKey) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSave(), 800);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [elevenLabsKey, firecrawlKey]);
+
   const addProviderHandler = async () => {
     if (!newProvider.name || !newProvider.base_url) return;
-    setSaving(true);
+    setProviderSaving(true);
+    setProviderMsg(t.settings.verifying);
     try {
       const saved = await saveProvider(newProvider);
       setProviders(prev => [...prev, saved]);
       setExpandedId(saved.id);
       setNewProvider({ name: "", base_url: "", api_key: "" });
       setShowAddForm(false);
-    } catch {
-      // fallback: add locally
-      const local: Provider = {
-        id: Date.now().toString(),
-        name: newProvider.name,
-        base_url: newProvider.base_url,
-        api_key: newProvider.api_key,
-        models: [t.settings.modelsLoading],
-        active: providers.length === 0,
-      };
-      setProviders(prev => [...prev, local]);
-      setShowAddForm(false);
+      setProviderMsg("");
+    } catch (e: unknown) {
+      let msg = t.settings.verifyFailed;
+      if (e instanceof Error) {
+        try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; }
+      }
+      setProviderMsg(msg);
     } finally {
-      setSaving(false);
+      setProviderSaving(false);
+    }
+  };
+
+  const loadVoices = async () => {
+    setVoicesLoading(true);
+    setVoicesError("");
+    try {
+      const list = await fetchVoices();
+      setVoices(list);
+    } catch (e) {
+      setVoicesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVoicesLoading(false);
+    }
+  };
+
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const playPreview = (url: string) => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+      setIsPlaying(false);
+    } else {
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+      setIsPlaying(true);
+      audio.play().catch(() => { setIsPlaying(false); previewAudioRef.current = null; });
+      audio.onended = () => { setIsPlaying(false); previewAudioRef.current = null; };
+    }
+  };
+
+  const stopPreview = () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+      setIsPlaying(false);
+    }
+  };
+
+  const voiceOptionLabel = (v: Voice) => {
+    if (locale === "en") return v.name;
+    const vl = t.settings.voiceLabels;
+    const lc = (s: string | undefined) => (s ?? "").toLowerCase().replace(/_/g, " ");
+    const labels = v.labels ?? {};
+    const gender = vl.gender[lc(labels.gender)] || labels.gender;
+    const age    = vl.age[lc(labels.age)]        || labels.age;
+    const accent = vl.accent[lc(labels.accent)]  || labels.accent;
+    const baseName = v.name.split(" - ")[0];
+    const attrs  = [gender, age, accent].filter(Boolean).join("/");
+    return attrs ? `${baseName}（${attrs}）` : baseName;
+  };
+
+  const startEditHandler = (provider: Provider) => {
+    setEditingId(provider.id);
+    setEditForm({ name: provider.name, base_url: provider.base_url, api_key: "" });
+    setProviderMsg("");
+  };
+
+  const saveEditHandler = async (id: string) => {
+    setProviderSaving(true);
+    setProviderMsg(t.settings.verifying);
+    try {
+      const updated = await updateProvider(id, {
+        name: editForm.name,
+        base_url: editForm.base_url,
+        api_key: editForm.api_key || undefined,
+      });
+      setProviders(prev => prev.map(p => p.id === id ? updated : p));
+      setEditingId(null);
+      setProviderMsg(t.settings.verifySuccess);
+      setTimeout(() => setProviderMsg(""), 3000);
+    } catch (e: unknown) {
+      let msg = t.settings.verifyFailed;
+      if (e instanceof Error) {
+        try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; }
+      }
+      setProviderMsg(msg);
+    } finally {
+      setProviderSaving(false);
     }
   };
 
   const removeProviderHandler = async (id: string) => {
-    try {
-      await deleteProvider(id);
-    } catch {
-      // ignore if backend unavailable
-    }
+    try { await deleteProvider(id); } catch {}
     setProviders(prev => prev.filter(p => p.id !== id));
     if (expandedId === id) setExpandedId(null);
+    if (editingId === id) setEditingId(null);
+  };
+
+  const activateProviderHandler = async (id: string) => {
+    try { await activateProvider(id); } catch {}
+    setProviders(prev => prev.map(p => ({ ...p, active: p.id === id })));
   };
 
   return (
@@ -145,23 +291,25 @@ export default function SettingsPage() {
 
       {/* Language */}
       <section className="mb-10 animate-fade-up" style={{ animationDelay: "40ms" }}>
-        <SectionTitle className="mb-5">{t.settings.language}</SectionTitle>
-        <div className="flex gap-3">
-          {(["zh", "en"] as Locale[]).map(l => (
-            <button
-              key={l}
-              onClick={() => setLocale(l)}
-              className={`
-                px-6 py-3 rounded-md text-sm font-medium transition-all active:scale-[0.98]
-                ${locale === l
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/30"
-                }
-              `}
-            >
-              {l === "zh" ? "中文" : "English"}
-            </button>
-          ))}
+        <div className="flex items-center justify-between mb-5">
+          <SectionTitle>{t.settings.language}</SectionTitle>
+          <div className="flex gap-3">
+            {(["zh", "en"] as Locale[]).map(l => (
+              <button
+                key={l}
+                onClick={() => setLocale(l)}
+                className={`
+                  px-6 py-3 rounded-md text-sm font-medium transition-all active:scale-[0.98]
+                  ${locale === l
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/30"
+                  }
+                `}
+              >
+                {l === "zh" ? "中文" : "English"}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -189,18 +337,35 @@ export default function SettingsPage() {
             <div key={provider.id} className="bg-card border border-border rounded-lg overflow-hidden">
               <div
                 className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-surface-alt/50 transition-colors"
-                onClick={() => setExpandedId(expandedId === provider.id ? null : provider.id)}
+                onClick={() => {
+                  if (editingId === provider.id) return;
+                  const closing = expandedId === provider.id;
+                  setExpandedId(closing ? null : provider.id);
+                  if (!closing) {
+                    setExpandedModels(prev => { const n = new Set(prev); n.delete(provider.id); return n; });
+                  }
+                }}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${provider.active ? "bg-success" : "bg-border"}`} />
                   <span className="text-base font-semibold">{provider.name}</span>
-                  {provider.active && (
-                    <span className="font-mono text-[10px] bg-success/10 text-success px-2 py-0.5 rounded">
-                      {t.settings.activeProvider}
-                    </span>
-                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (editingId === provider.id) {
+                        setEditingId(null);
+                        setProviderMsg("");
+                      } else {
+                        setExpandedId(provider.id);
+                        startEditHandler(provider);
+                      }
+                    }}
+                    className="text-muted-foreground hover:text-primary transition-colors p-1"
+                    title={t.settings.editProvider}
+                  >
+                    <Pencil size={14} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); removeProviderHandler(provider.id); }}
                     className="text-muted-foreground hover:text-destructive transition-colors p-1"
@@ -216,26 +381,88 @@ export default function SettingsPage() {
 
               {expandedId === provider.id && (
                 <div className="px-5 pb-5 border-t border-border space-y-4 pt-4 animate-fade-up">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs text-muted-foreground min-w-[72px]">{t.settings.apiUrl}</span>
-                      <span className="font-mono text-sm text-foreground/80 truncate">{provider.base_url}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs text-muted-foreground min-w-[72px]">{t.settings.apiKey}</span>
-                      <span className="font-mono text-sm text-foreground/80">••••••••••••</span>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <span className="font-mono text-xs text-muted-foreground min-w-[72px] mt-0.5">{t.settings.models}</span>
-                      <div className="flex flex-wrap gap-2">
-                        {provider.models.map(m => (
-                          <span key={m} className="font-mono text-xs bg-surface-alt px-3 py-1 rounded text-muted-foreground">
-                            {m}
+                  {editingId === provider.id ? (
+                    // 编辑模式
+                    <div className="space-y-3">
+                      <InputField
+                        value={editForm.name}
+                        onChange={v => setEditForm(f => ({ ...f, name: v }))}
+                        placeholder={t.settings.providerName}
+                      />
+                      <InputField
+                        value={editForm.base_url}
+                        onChange={v => setEditForm(f => ({ ...f, base_url: v }))}
+                        placeholder={t.settings.baseUrl}
+                        mono
+                      />
+                      <InputField
+                        value={editForm.api_key}
+                        onChange={v => setEditForm(f => ({ ...f, api_key: v }))}
+                        placeholder={t.settings.apiKeyPlaceholder}
+                        type="password"
+                        mono
+                      />
+                      <div className="space-y-2">
+                        {providerMsg && (
+                          <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
+                            {providerMsg}
                           </span>
-                        ))}
+                        )}
+                        <div className="flex gap-3 justify-end">
+                          <button
+                            onClick={() => { setEditingId(null); setProviderMsg(""); }}
+                            className="px-5 py-2.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {t.settings.cancel}
+                          </button>
+                          <button
+                            onClick={() => saveEditHandler(provider.id)}
+                            disabled={providerSaving || !editForm.name || !editForm.base_url}
+                            className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded-md text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {providerSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                            {t.settings.save}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  ) : (
+                    // 只读模式
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-xs text-muted-foreground min-w-[72px]">{t.settings.apiUrl}</span>
+                        <span className="font-mono text-sm text-foreground/80 truncate">{provider.base_url}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-xs text-muted-foreground min-w-[72px]">{t.settings.apiKey}</span>
+                        <span className="font-mono text-sm text-foreground/80">••••••••••••</span>
+                      </div>
+                      <div className="flex items-start gap-3">
+                        <span className="font-mono text-xs text-muted-foreground min-w-[72px] mt-0.5">{t.settings.models}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className={`flex flex-wrap gap-2 overflow-hidden transition-all ${expandedModels.has(provider.id) ? "" : "max-h-[28px]"}`}>
+                            {provider.models.map(m => (
+                              <span key={m} className="font-mono text-xs bg-surface-alt px-3 py-1 rounded text-muted-foreground whitespace-nowrap">
+                                {m}
+                              </span>
+                            ))}
+                          </div>
+                          {provider.models.length > 0 && (
+                            <button
+                              onClick={() => setExpandedModels(prev => {
+                                const next = new Set(prev);
+                                next.has(provider.id) ? next.delete(provider.id) : next.add(provider.id);
+                                return next;
+                              })}
+                              className="mt-1.5 font-mono text-[10px] text-muted-foreground/60 hover:text-primary transition-colors"
+                            >
+                              {expandedModels.has(provider.id) ? "▲ 收起" : "▼ 展开全部"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -262,30 +489,164 @@ export default function SettingsPage() {
                 type="password"
                 mono
               />
-              <div className="flex gap-3 items-center">
-                <button
-                  onClick={addProviderHandler}
-                  disabled={saving}
-                  className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded-md text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60"
-                >
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                  {t.settings.save}
-                </button>
-                <button
-                  onClick={() => setShowAddForm(false)}
-                  className="px-5 py-2.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {t.settings.cancel}
-                </button>
+              <div className="space-y-2">
+                {providerMsg && (
+                  <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
+                    {providerMsg}
+                  </span>
+                )}
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => { setShowAddForm(false); setProviderMsg(""); }}
+                    className="px-5 py-2.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {t.settings.cancel}
+                  </button>
+                  <button
+                    onClick={addProviderHandler}
+                    disabled={providerSaving || !newProvider.name || !newProvider.base_url || !newProvider.api_key}
+                    className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2.5 rounded-md text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {providerSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                    {t.settings.save}
+                  </button>
+                </div>
               </div>
             </div>
           )}
         </div>
       </section>
 
+      {/* Content Generation Model */}
+      <section className="mb-10 animate-fade-up relative z-10" style={{ animationDelay: "120ms" }}>
+        <div className="mb-5">
+          <SectionTitle>{t.settings.contentModel}</SectionTitle>
+          <p className="text-xs text-muted-foreground mt-1">{t.settings.contentModelDesc}</p>
+        </div>
+
+        {providers.length === 0 ? (
+          <div className="bg-card border border-dashed border-border rounded-lg px-5 py-4">
+            <p className="text-sm text-muted-foreground">{t.settings.noProviders}</p>
+          </div>
+        ) : (
+          <div ref={modelDropRef} className="relative">
+            {/* Trigger */}
+            <button
+              onClick={() => {
+                if (!modelOpen) {
+                  const initProv =
+                    providers.find(p => p.models.includes(contentModel))?.id ??
+                    providers.find(p => p.active)?.id ??
+                    providers[0]?.id ?? null;
+                  setModelProvId(initProv);
+                  setModelSearch("");
+                }
+                setModelOpen(o => !o);
+              }}
+              className="w-full flex items-center justify-between bg-background border border-border rounded-md px-4 py-3 text-sm hover:border-primary/50 transition-all focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20"
+            >
+              <span className={contentModel ? "text-foreground font-mono" : "text-muted-foreground/60"}>
+                {contentModel
+                  ? (() => {
+                      const prov = providers.find(p => p.id === contentProviderId) ?? providers.find(p => p.models.includes(contentModel));
+                      return prov ? `${prov.name} · ${contentModel}` : contentModel;
+                    })()
+                  : t.settings.contentModelPlaceholder}
+              </span>
+              <ChevronDown size={15} className={`text-muted-foreground transition-transform ${modelOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* Dropdown panel */}
+            {modelOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full bg-card border border-border rounded-lg shadow-xl overflow-hidden animate-fade-up">
+                {/* Search */}
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+                  <Search size={13} className="text-muted-foreground flex-shrink-0" />
+                  <input
+                    autoFocus
+                    value={modelSearch}
+                    onChange={e => setModelSearch(e.target.value)}
+                    placeholder={t.settings.searchModel}
+                    className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                  />
+                </div>
+
+                {/* Two columns */}
+                <div className="flex h-56">
+                  {/* Left: providers */}
+                  <div className="w-[38%] border-r border-border overflow-y-auto py-1 flex-shrink-0">
+                    {providers.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => setModelProvId(p.id)}
+                        className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                          modelProvId === p.id
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-surface-alt/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate">{p.name}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Right: models */}
+                  <div ref={modelListRef} className="flex-1 overflow-y-auto py-1">
+                    {(() => {
+                      const prov = providers.find(p => p.id === modelProvId);
+                      const models = (prov?.models ?? []).filter(m =>
+                        !modelSearch || m.toLowerCase().includes(modelSearch.toLowerCase())
+                      );
+                      if (!prov) return (
+                        <p className="px-3 py-2 text-xs text-muted-foreground/60">{t.settings.contentModelPlaceholder}</p>
+                      );
+                      if (models.length === 0) return (
+                        <p className="px-3 py-2 text-xs text-muted-foreground/60">无匹配模型</p>
+                      );
+                      return models.map(m => (
+                        <button
+                          key={m}
+                          data-selected={contentModel === m ? "true" : undefined}
+                          onClick={() => {
+                            setContentModel(m);
+                            setContentProviderId(modelProvId ?? "");
+                            setModelOpen(false);
+                            saveContentModel(m, modelProvId ?? "");
+                          }}
+                          className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors ${
+                            contentModel === m
+                              ? "bg-primary/10 text-primary"
+                              : "text-muted-foreground hover:text-foreground hover:bg-surface-alt/50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {contentModel === m && <Check size={11} className="flex-shrink-0" />}
+                            <span className="truncate">{m}</span>
+                          </div>
+                        </button>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Service keys */}
       <section className="animate-fade-up" style={{ animationDelay: "160ms" }}>
-        <SectionTitle className="mb-5">{t.settings.services}</SectionTitle>
+        <div className="flex items-center justify-between mb-5">
+          <SectionTitle>{t.settings.services}</SectionTitle>
+          {(saving || saveMsg) && (
+            <span className={`text-xs font-mono flex items-center gap-1 ${saveMsg === t.settings.savedOk ? "text-success" : saveMsg ? "text-destructive" : "text-muted-foreground"}`}>
+              {saving && <Loader2 size={11} className="animate-spin" />}
+              {saving ? t.settings.verifying.replace("验证连接中", "保存中").replace("Verifying connection", "Saving") : saveMsg}
+            </span>
+          )}
+        </div>
 
         <div className="space-y-4">
           {/* ElevenLabs */}
@@ -305,10 +666,52 @@ export default function SettingsPage() {
             <InputField
               value={elevenLabsKey}
               onChange={setElevenLabsKey}
-              placeholder="ElevenLabs API Key"
+              placeholder={elevenLabsKeySet ? "已设置，重新输入以更改" : "ElevenLabs API Key"}
               type="password"
               mono
             />
+            {/* 助手音色选择 */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">{t.settings.assistantVoice}</span>
+                <button
+                  onClick={loadVoices}
+                  disabled={voicesLoading}
+                  title={voices.length > 0 ? t.settings.refreshVoices : t.settings.loadVoices}
+                  className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                >
+                  {voicesLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                </button>
+              </div>
+              {voicesError && (
+                <p className="text-xs text-destructive mb-2 font-mono">{voicesError}</p>
+              )}
+              {voices.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <select
+                    className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                    value={assistantVoiceId || voices[0]?.id || ""}
+                    onChange={(e) => { stopPreview(); setAssistantVoiceId(e.target.value); doSave(e.target.value); }}
+                  >
+                    {voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {voiceOptionLabel(v)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      const voice = voices.find(v => v.id === (assistantVoiceId || voices[0]?.id));
+                      if (voice?.preview_url) playPreview(voice.preview_url);
+                    }}
+                    title={t.settings.previewVoice}
+                    className="w-9 h-9 flex-shrink-0 rounded border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                  >
+                    {isPlaying ? <Square size={13} /> : <Play size={13} />}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Firecrawl */}
@@ -328,28 +731,12 @@ export default function SettingsPage() {
             <InputField
               value={firecrawlKey}
               onChange={setFirecrawlKey}
-              placeholder="Firecrawl API Key"
+              placeholder={firecrawlKeySet ? "已设置，重新输入以更改" : "Firecrawl API Key"}
               type="password"
               mono
             />
           </div>
 
-          {/* Save button */}
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
-              onClick={handleSaveServices}
-              disabled={saving}
-              className="flex items-center gap-2 bg-primary text-primary-foreground px-6 py-2.5 rounded-md text-sm font-semibold hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-60"
-            >
-              {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-              {t.settings.saveAll}
-            </button>
-            {saveMsg && (
-              <span className={`text-sm font-mono ${saveMsg === t.settings.savedOk ? "text-success" : "text-destructive"}`}>
-                {saveMsg}
-              </span>
-            )}
-          </div>
         </div>
       </section>
 

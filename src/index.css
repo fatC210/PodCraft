@@ -56,10 +56,39 @@
 @layer base {
   * {
     @apply border-border;
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+  }
+
+  *:hover::-webkit-scrollbar-thumb {
+    background: hsl(240 4% 30%);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 4% 45%);
   }
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    scrollbar-width: none;
+  }
+
+  body:hover {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(240 4% 30%) transparent;
   }
 
   h1, h2, h3, h4, h5, h6 {

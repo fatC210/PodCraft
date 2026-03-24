@@ -22,6 +22,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export type ServiceSettings = {
   elevenlabs_key: string;
   firecrawl_key: string;
+  assistant_voice_id?: string;
+  content_model?: string;
+  content_provider_id?: string;
 };
 
 export type Provider = {
@@ -49,6 +52,14 @@ export function saveProvider(provider: Omit<Provider, "id" | "models" | "active"
   return request("/settings/providers", { method: "POST", body: JSON.stringify(provider) });
 }
 
+export function updateProvider(id: string, provider: { name: string; base_url: string; api_key?: string }): Promise<Provider> {
+  return request(`/settings/providers/${id}`, { method: "PUT", body: JSON.stringify(provider) });
+}
+
+export function activateProvider(id: string): Promise<{ ok: boolean }> {
+  return request(`/settings/providers/${id}/activate`, { method: "PUT" });
+}
+
 export function deleteProvider(id: string): Promise<{ ok: boolean }> {
   return request(`/settings/providers/${id}`, { method: "DELETE" });
 }
@@ -60,7 +71,7 @@ export function fetchProviderModels(id: string): Promise<string[]> {
 // ── Voices ────────────────────────────────────────────────────────────────────
 
 export type Voice = {
-  voice_id: string;
+  id: string;
   name: string;
   preview_url: string;
   labels: Record<string, string>;

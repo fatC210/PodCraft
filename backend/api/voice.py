@@ -84,14 +84,34 @@ FOLLOW_UP_FALLBACKS = [
 ]
 
 
-def _extract_title(history: list) -> str:
-    """从对话历史中提取标题（第一条用户消息，截取前30字）"""
-    for msg in history:
-        if msg.get("role") == "user":
-            content = msg.get("content", "").strip()
-            if content:
-                return content[:30] + ("…" if len(content) > 30 else "")
-    return "未命名对话"
+async def _generate_title(history: list, settings: dict) -> str:
+    """用 LLM 根据对话内容生成简短标题，失败时降级为关键词摘取"""
+    # 取前几轮用户发言拼成摘要
+    user_msgs = [m["content"] for m in history if m.get("role") == "user"][:4]
+    if not user_msgs:
+        return "未命名对话"
+
+    summary = " / ".join(user_msgs)
+
+    try:
+        provider, model = _content_provider_and_model(settings)
+        if not provider:
+            raise ValueError("no provider")
+        title = await chat(
+            messages=[
+                {"role": "system", "content": "你是标题生成助手。根据用户给出的播客制作对话摘要，生成一个简洁的中文标题（8字以内，不加引号，不加书名号，直接输出标题文字）。"},
+                {"role": "user", "content": f"对话摘要：{summary}"},
+            ],
+            base_url=provider["base_url"],
+            api_key=provider["api_key"],
+            model=model,
+        )
+        title = title.strip().strip('"').strip("《》「」【】").replace("\n", "")
+        return title[:20] if title else "未命名对话"
+    except Exception:
+        # 降级：提取第一条用户消息前15字
+        first = user_msgs[0].strip()
+        return first[:15] + ("…" if len(first) > 15 else "")
 
 
 # ── REST 端点：中断会话管理 ────────────────────────────────────────────────────
@@ -109,6 +129,22 @@ def list_interrupted_sessions():
         }
         for r in rows
     ]
+
+
+@router.get("/api/voice/interrupted/{session_id}")
+def get_interrupted_session(session_id: str):
+    from fastapi import HTTPException
+    row = get_interrupted_session_by_id(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "stage": row["stage"],
+        "stage_name": STAGE_NAMES[min(row["stage"], len(STAGE_NAMES) - 1)],
+        "history": json.loads(row["history_json"]),
+        "created_at": row["created_at"],
+    }
 
 
 @router.delete("/api/voice/interrupted/{session_id}")
@@ -270,9 +306,10 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
             has_user_msg = any(m.get("role") == "user" for m in sess.get("history", []))
             if has_user_msg:
                 try:
+                    title = await _generate_title(sess["history"], settings)
                     save_interrupted_session({
                         "id": session_id,
-                        "title": _extract_title(sess["history"]),
+                        "title": title,
                         "stage": sess["stage"],
                         "history_json": json.dumps(sess["history"], ensure_ascii=False),
                         "materials_json": json.dumps(sess["materials"], ensure_ascii=False),

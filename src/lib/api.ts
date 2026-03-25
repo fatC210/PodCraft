@@ -130,6 +130,13 @@ export function aiEditScript(params: {
 
 // ── Podcast ───────────────────────────────────────────────────────────────────
 
+export type PodcastSegment = {
+  role: string;
+  text: string;
+  start_ms: number;
+  duration_ms: number;
+};
+
 export type PodcastHistoryItem = {
   id: string;
   title: string;
@@ -138,6 +145,8 @@ export type PodcastHistoryItem = {
   language: string;
   materials: number;
   audio_url: string;
+  script?: string;
+  segments_json?: string;
   created_at: string;
 };
 
@@ -173,8 +182,16 @@ export type InterruptedSession = {
   created_at: string;
 };
 
+export type InterruptedSessionDetail = InterruptedSession & {
+  history: { role: string; content: string }[];
+};
+
 export function fetchInterruptedSessions(): Promise<InterruptedSession[]> {
   return request("/voice/interrupted");
+}
+
+export function fetchInterruptedSession(id: string): Promise<InterruptedSessionDetail> {
+  return request(`/voice/interrupted/${id}`);
 }
 
 export function deleteInterruptedSession(id: string): Promise<{ ok: boolean }> {

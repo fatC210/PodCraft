@@ -25,9 +25,16 @@ def init_db():
                 materials INTEGER DEFAULT 0,
                 audio_path TEXT,
                 script TEXT,
+                segments_json TEXT DEFAULT '[]',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # 兼容旧库：若无 segments_json 列则补加
+        try:
+            conn.execute("ALTER TABLE podcasts ADD COLUMN segments_json TEXT DEFAULT '[]'")
+            conn.commit()
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS interrupted_sessions (
                 id TEXT PRIMARY KEY,
@@ -73,9 +80,9 @@ def save_podcast(data: dict):
     try:
         conn.execute("""
             INSERT OR REPLACE INTO podcasts
-                (id, title, duration, date, language, materials, audio_path, script, created_at)
+                (id, title, duration, date, language, materials, audio_path, script, segments_json, created_at)
             VALUES
-                (:id, :title, :duration, :date, :language, :materials, :audio_path, :script, :created_at)
+                (:id, :title, :duration, :date, :language, :materials, :audio_path, :script, :segments_json, :created_at)
         """, {
             "id": data.get("id"),
             "title": data.get("title", ""),
@@ -85,6 +92,7 @@ def save_podcast(data: dict):
             "materials": data.get("materials", 0),
             "audio_path": data.get("audio_path", ""),
             "script": data.get("script", ""),
+            "segments_json": data.get("segments_json", "[]"),
             "created_at": data.get("created_at", datetime.now().isoformat()),
         })
         conn.commit()

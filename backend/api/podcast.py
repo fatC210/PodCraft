@@ -1,5 +1,6 @@
 import uuid
 import re
+import json
 from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter
@@ -67,14 +68,24 @@ async def generate_podcast(body: GeneratePodcastRequest):
             from fastapi import HTTPException
             raise HTTPException(status_code=500, detail=f"TTS failed for role {seg['role']}: {str(e)}")
 
-    # 用 pydub 拼接音频
+    # 用 pydub 拼接音频，并记录每段时间偏移
+    segments_info = []
     try:
         from pydub import AudioSegment
         import io
 
         combined = None
-        for chunk in audio_chunks:
+        offset_ms = 0
+        for i, (chunk, seg) in enumerate(zip(audio_chunks, segments)):
             seg_audio = AudioSegment.from_file(io.BytesIO(chunk), format="mp3")
+            seg_duration_ms = len(seg_audio)
+            segments_info.append({
+                "role": seg["role"],
+                "text": seg["text"],
+                "start_ms": offset_ms,
+                "duration_ms": seg_duration_ms,
+            })
+            offset_ms += seg_duration_ms
             if combined is None:
                 combined = seg_audio
             else:
@@ -99,6 +110,9 @@ async def generate_podcast(body: GeneratePodcastRequest):
         audio_path = STORAGE_DIR / audio_filename
         audio_path.write_bytes(b"".join(audio_chunks))
         duration_str = "未知"
+        # 无时间戳时均等分配
+        for seg in segments:
+            segments_info.append({"role": seg["role"], "text": seg["text"], "start_ms": -1, "duration_ms": -1})
 
     # 入库
     podcast_data = {
@@ -110,6 +124,7 @@ async def generate_podcast(body: GeneratePodcastRequest):
         "materials": len(body.voice_assignments),
         "audio_path": audio_filename,
         "script": body.script,
+        "segments_json": json.dumps(segments_info, ensure_ascii=False),
         "created_at": datetime.now().isoformat(),
     }
     save_podcast(podcast_data)

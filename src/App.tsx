@@ -8,6 +8,8 @@ import Index from "./pages/Index";
 import VoiceStudio from "./pages/VoiceStudio";
 import History from "./pages/History";
 import SettingsPage from "./pages/SettingsPage";
+import PodcastPlayer from "./pages/PodcastPlayer";
+import SessionDetail from "./pages/SessionDetail";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,6 +25,8 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/create" element={<VoiceStudio />} />
             <Route path="/history" element={<History />} />
+            <Route path="/podcast/:id" element={<PodcastPlayer />} />
+            <Route path="/history/session/:id" element={<SessionDetail />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />

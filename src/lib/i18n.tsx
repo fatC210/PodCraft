@@ -63,7 +63,7 @@ const zh = {
     label: "历史记录",
     title: "播客档案",
     materials: "素材",
-    filterAll: "全部",
+    filterAll: "任务",
     filterPodcast: "播客",
     filterCall: "通话",
     items: "条",

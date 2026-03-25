@@ -6,7 +6,10 @@
       "mcp__ide__getDiagnostics",
       "Bash(./node_modules/.bin/tsc --noEmit 2>&1)",
       "Bash(./node_modules/.bin/vite build:*)",
-      "WebFetch(domain:elevenlabs.io)"
+      "WebFetch(domain:elevenlabs.io)",
+      "Bash(python -c \"import backend.api.voice\")",
+      "Bash(python -c \"import api.voice\")",
+      "Bash(python:*)"
     ]
   }
 }

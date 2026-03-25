@@ -184,9 +184,9 @@ export default function History() {
                 ))}
               </div>
             </div>
-          ) : !showInterrupted && (
+          ) : !showInterrupted ? (
             <EmptyState filter="podcast" />
-          )}
+          ) : null}
         </div>
       )}
     </div>

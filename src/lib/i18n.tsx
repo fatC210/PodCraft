@@ -25,7 +25,7 @@ const zh = {
   },
   studio: {
     title: "语音创作工作台",
-    stages: ["确定主题", "筛选素材", "生成脚本", "选择音色", "生成播客"],
+    stages: ["确定主题", "筛选素材", "确认参数", "确认脚本", "选择音色", "生成播客"],
     you: "你",
     processing: "思考中…",
     listening: "聆听中…",
@@ -146,7 +146,7 @@ const en: Translations = {
   },
   studio: {
     title: "VOICE CREATION STUDIO",
-    stages: ["Set Topic", "Select Material", "Generate Script", "Choose Voice", "Generate Podcast"],
+    stages: ["Set Topic", "Select Material", "Confirm Params", "Confirm Script", "Choose Voice", "Generate Podcast"],
     you: "You",
     processing: "Thinking…",
     listening: "Listening…",

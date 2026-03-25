@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause } from "lucide-react";
+import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause, Send } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { fetchSettings, fetchVoices, type Voice } from "@/lib/api";
 
@@ -11,7 +11,8 @@ type AIState = "connecting" | "speaking" | "listening" | "thinking" | "generatin
 type RichContent =
   | { type: "voices"; voices: Voice[] }
   | { type: "script"; text: string }
-  | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> };
+  | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> }
+  | { type: "loading"; label: string };
 
 type Message = {
   id: number;
@@ -23,7 +24,7 @@ type Message = {
 
 type WSMessage =
   | { type: "session_id"; session_id: string }
-  | { type: "session_restored"; stage: number; history: Array<{ role: string; content: string }> }
+  | { type: "session_restored"; stage: number; history: Array<{ role: string; content: string }>; materials: Array<{ url: string; title: string; snippet: string }>; script: string }
   | { type: "transcript"; text: string }
   | { type: "ai_text"; text: string; stage: number }
   | { type: "audio"; data: string }
@@ -31,9 +32,13 @@ type WSMessage =
   | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> }
   | { type: "script_ready"; text: string }
   | { type: "generating_podcast" }
+  | { type: "progress"; task: string }
   | { type: "podcast_done"; id: string; audio_url: string }
   | { type: "no_speech" }
   | { type: "error"; message: string };
+
+/** 无用户说话时追问间隔；有进度条/后台任务时不应启动此计时器 */
+const FOLLOW_UP_TIMEOUT_MS = 60 * 1000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -179,6 +184,24 @@ function ScriptCard({ text }: { text: string }) {
   );
 }
 
+/** Loading / progress indicator shown while AI is working */
+function LoadingIndicator({ label }: { label: string }) {
+  return (
+    <div className="mt-2 flex items-center gap-2.5 px-3 py-2 rounded-lg border border-border bg-background/50 max-w-xs">
+      <div className="flex gap-1">
+        {[0, 1, 2].map(i => (
+          <div
+            key={i}
+            className="w-1.5 h-1.5 rounded-full bg-primary/70"
+            style={{ animation: `bounce 1s ease-in-out ${i * 160}ms infinite` }}
+          />
+        ))}
+      </div>
+      <span className="text-xs text-muted-foreground font-mono">{label}</span>
+    </div>
+  );
+}
+
 /** Search result materials card with clickable links */
 function MaterialsCard({ items }: { items: Array<{ url: string; title: string; snippet: string }> }) {
   if (items.length === 0) return null;
@@ -228,15 +251,17 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
           )}
         </div>
 
-        <div
-          className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-            isAI
-              ? "bg-card border border-border rounded-tl-sm text-foreground"
-              : "bg-primary/15 border border-primary/25 rounded-tr-sm text-foreground"
-          }`}
-        >
-          {msg.content}
-        </div>
+        {(!isAI || String(msg.content ?? "").trim() !== "") && (
+          <div
+            className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+              isAI
+                ? "bg-card border border-border rounded-tl-sm text-foreground"
+                : "bg-primary/15 border border-primary/25 rounded-tr-sm text-foreground"
+            }`}
+          >
+            {msg.content}
+          </div>
+        )}
 
         {/* Rich content below AI bubble */}
         {isAI && msg.richContent?.type === "voices" && (
@@ -247,6 +272,9 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
         )}
         {isAI && msg.richContent?.type === "materials" && (
           <MaterialsCard items={msg.richContent.items} />
+        )}
+        {isAI && msg.richContent?.type === "loading" && (
+          <LoadingIndicator label={msg.richContent.label} />
         )}
       </div>
 
@@ -293,6 +321,7 @@ export default function VoiceStudio() {
   const [isRecording, setIsRecording] = useState(false);
   const [startTime] = useState(Date.now());
   const [aiName, setAiName] = useState("AI");
+  const [textInput, setTextInput] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -309,10 +338,23 @@ export default function VoiceStudio() {
   const isPlayingRef = useRef(false);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const isPausedRef = useRef(false);
+  const discardAudioRef = useRef(false);
   const pendingRichContent = useRef<RichContent | null>(null);
   const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followUpAttemptRef = useRef(0);
   const interruptCheckingRef = useRef(false);
+  // 后台内容生成中（搜索/生成脚本），音频播完后不切到 listening，保持 thinking
+  const isWaitingContentRef = useRef(false);
+  const messagesRef = useRef<Message[]>([]);
+  const aiStateRef = useRef<AIState>("connecting");
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    aiStateRef.current = aiState;
+  }, [aiState]);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -322,6 +364,22 @@ export default function VoiceStudio() {
     setMessages(prev => [...prev, { id: msgId.current++, role, content, timestamp: nowTimestamp(), richContent }]);
     scrollToBottom();
   }, [scrollToBottom]);
+
+  // 将最近一条带 loading richContent 的消息替换为真实内容
+  const replaceLoadingContent = useCallback((rich: RichContent) => {
+    setMessages(prev => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].richContent?.type === "loading") {
+          const updated = [...prev];
+          updated[i] = { ...updated[i], richContent: rich };
+          return updated;
+        }
+      }
+      // 没有 loading 消息时降级为 pendingRichContent
+      pendingRichContent.current = rich;
+      return prev;
+    });
+  }, []);
 
   // Fetch AI voice name from settings
   useEffect(() => {
@@ -341,17 +399,43 @@ export default function VoiceStudio() {
 
   // ── Audio playback queue ──────────────────────────────────────────────────
 
+  const shouldDeferFollowUp = useCallback(() => {
+    if (isWaitingContentRef.current) return true;
+    if (messagesRef.current.some(m => m.richContent?.type === "loading")) return true;
+    if (aiStateRef.current === "generating") return true;
+    return false;
+  }, []);
+
+  const sendFollowUp = useCallback(function sendFollowUpFn() {
+    if (isPausedRef.current) {
+      followUpTimerRef.current = null;
+      return;
+    }
+    if (shouldDeferFollowUp()) {
+      followUpTimerRef.current = setTimeout(sendFollowUpFn, FOLLOW_UP_TIMEOUT_MS);
+      return;
+    }
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    followUpAttemptRef.current += 1;
+    console.log(`[follow_up] 前端发送追问 attempt=${followUpAttemptRef.current}`);
+    ws.send(JSON.stringify({ type: "follow_up", attempt: followUpAttemptRef.current }));
+    followUpTimerRef.current = setTimeout(sendFollowUpFn, FOLLOW_UP_TIMEOUT_MS);
+  }, [shouldDeferFollowUp]);
+
   const startFollowUpTimer = useCallback(() => {
     if (isPausedRef.current) return;
+    if (shouldDeferFollowUp()) return;
     if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
     followUpAttemptRef.current = 0;
-    followUpTimerRef.current = setTimeout(sendFollowUp, FOLLOW_UP_TIMEOUT);
-  }, []);
+    followUpTimerRef.current = setTimeout(sendFollowUp, FOLLOW_UP_TIMEOUT_MS);
+  }, [sendFollowUp, shouldDeferFollowUp]);
 
   // ── AI 打断 ───────────────────────────────────────────────────────────────
 
   const interruptAI = useCallback(() => {
     interruptCheckingRef.current = false;
+    discardAudioRef.current = true;
     if (audioSourceRef.current) {
       audioSourceRef.current.onended = null;
       try { audioSourceRef.current.stop(); } catch { /* already stopped */ }
@@ -398,7 +482,7 @@ export default function VoiceStudio() {
       const highAvg = hHigh > hLow ? highSum / (hHigh - hLow) : 0;
 
       // 判断为语音：人声频段有足够能量 且 高频能量不超过人声（排除音乐/噪声）
-      const isSpeechLike = speechAvg > 40 && speechAvg > highAvg * 1.3;
+      const isSpeechLike = speechAvg > 55 && speechAvg > highAvg * 1.3;
 
       if (isSpeechLike) {
         speechFrames++;
@@ -442,13 +526,17 @@ export default function VoiceStudio() {
         audioSourceRef.current = null;
         if (playQueueRef.current.length > 0) {
           playNextAudio();
+        } else if (isWaitingContentRef.current) {
+          // 后台还在生成内容，保持 thinking 状态，不进入 listening
+          setAIState("thinking");
         } else {
           setAIState("listening");
           startFollowUpTimer();
         }
       };
       source.start();
-      startInterruptMonitor();
+      // 延迟启动打断检测，让浏览器 echo cancellation 有时间收敛，避免误触发
+      setTimeout(() => startInterruptMonitor(), 600);
     } catch {
       isPlayingRef.current = false;
       audioSourceRef.current = null;
@@ -458,7 +546,7 @@ export default function VoiceStudio() {
   }, [startFollowUpTimer, startInterruptMonitor]);
 
   const enqueueAudio = useCallback((b64: string) => {
-    if (isPausedRef.current) return;
+    if (isPausedRef.current || discardAudioRef.current) return;
     playQueueRef.current.push(b64);
     playNextAudio();
   }, [playNextAudio]);
@@ -484,17 +572,42 @@ export default function VoiceStudio() {
           case "session_id":
             break;
           case "session_restored": {
-            // 恢复历史消息并设置阶段
             setCurrentStage(msg.stage);
-            const restored: Message[] = msg.history.map((h) => ({
-              id: msgId.current++,
-              role: h.role === "user" ? "user" : "ai",
-              content: h.content,
-              timestamp: nowTimestamp(),
-            }));
+
+            // 把 rich content 挂到历史中对应的那条 AI 消息下
+            const materialsRich: RichContent | undefined =
+              msg.materials.length > 0 ? { type: "materials", items: msg.materials } : undefined;
+            const scriptRich: RichContent | undefined =
+              msg.script ? { type: "script", text: msg.script } : undefined;
+
+            let materialsAttached = false;
+            let scriptAttached = false;
+
+            const restored: Message[] = msg.history.map((h) => {
+              let richContent: RichContent | undefined;
+              if (h.role === "assistant") {
+                if (!materialsAttached && materialsRich &&
+                  (h.content.includes("条素材") || h.content.includes("相关内容") || h.content.includes("找到"))) {
+                  richContent = materialsRich;
+                  materialsAttached = true;
+                } else if (!scriptAttached && scriptRich &&
+                  (h.content.includes("脚本已生成") || h.content.includes("完整脚本"))) {
+                  richContent = scriptRich;
+                  scriptAttached = true;
+                }
+              }
+              return {
+                id: msgId.current++,
+                role: h.role === "user" ? "user" : "ai",
+                content: h.content,
+                timestamp: nowTimestamp(),
+                richContent,
+              };
+            });
+
             setMessages(restored);
             scrollToBottom();
-            // 播报恢复提示
+
             const resumeNotice: Message = {
               id: msgId.current++,
               role: "ai",
@@ -502,6 +615,7 @@ export default function VoiceStudio() {
               timestamp: nowTimestamp(),
             };
             setMessages(prev => [...prev, resumeNotice]);
+            scrollToBottom();
             break;
           }
           case "transcript":
@@ -514,22 +628,93 @@ export default function VoiceStudio() {
             break;
           case "ai_text": {
             if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+            discardAudioRef.current = false;
             const rich = pendingRichContent.current ?? undefined;
             pendingRichContent.current = null;
-            addMessage("ai", msg.text, rich);
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (
+                last?.role === "ai" &&
+                last.richContent?.type === "loading" &&
+                !String(last.content ?? "").trim()
+              ) {
+                const nextRich = rich ?? last.richContent;
+                return [...prev.slice(0, -1), { ...last, content: msg.text, richContent: nextRich }];
+              }
+              return [...prev, {
+                id: msgId.current++,
+                role: "ai",
+                content: msg.text,
+                timestamp: nowTimestamp(),
+                richContent: rich,
+              }];
+            });
             setCurrentStage(msg.stage);
             setAIState("thinking");
+            scrollToBottom();
             break;
           }
           case "audio":
             enqueueAudio(msg.data);
             break;
-          case "materials":
+          case "progress": {
+            const label = msg.task === "searching" ? "搜索中…" : "生成脚本中…";
+            pendingRichContent.current = { type: "loading", label };
+            isWaitingContentRef.current = true;
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (
+                last?.role === "ai" &&
+                last.richContent?.type === "loading" &&
+                !String(last.content ?? "").trim()
+              ) {
+                return prev.map((m, i) =>
+                  i === prev.length - 1 ? { ...m, richContent: { type: "loading", label } } : m
+                );
+              }
+              return [...prev, {
+                id: msgId.current++,
+                role: "ai",
+                content: "",
+                timestamp: nowTimestamp(),
+                richContent: { type: "loading", label },
+              }];
+            });
+            scrollToBottom();
+            break;
+          }
+          case "materials": {
+            // 清除过渡消息的 loading，将素材卡挂到下一条 ai_text 消息下方
+            isWaitingContentRef.current = false;
+            setMessages(prev => {
+              for (let i = prev.length - 1; i >= 0; i--) {
+                if (prev[i].richContent?.type === "loading") {
+                  const updated = [...prev];
+                  updated[i] = { ...updated[i], richContent: undefined };
+                  return updated;
+                }
+              }
+              return prev;
+            });
             pendingRichContent.current = { type: "materials", items: msg.items };
             break;
-          case "script_ready":
+          }
+          case "script_ready": {
+            // 清除过渡消息的 loading，将脚本卡挂到下一条 ai_text 消息下方
+            isWaitingContentRef.current = false;
+            setMessages(prev => {
+              for (let i = prev.length - 1; i >= 0; i--) {
+                if (prev[i].richContent?.type === "loading") {
+                  const updated = [...prev];
+                  updated[i] = { ...updated[i], richContent: undefined };
+                  return updated;
+                }
+              }
+              return prev;
+            });
             pendingRichContent.current = { type: "script", text: msg.text };
             break;
+          }
           case "stage_change":
             setCurrentStage(msg.stage);
             // Voice selection stage: pre-fetch voices to attach as rich content
@@ -541,9 +726,11 @@ export default function VoiceStudio() {
             break;
           case "generating_podcast":
             setAIState("generating");
+            isWaitingContentRef.current = true;
             break;
           case "podcast_done":
             setAIState("listening");
+            isWaitingContentRef.current = false;
             break;
           case "no_speech":
             setAIState("listening");
@@ -703,20 +890,6 @@ export default function VoiceStudio() {
     }
   }, [aiState, isMuted, isRecording, isPaused, startRecording]);
 
-  // ── Follow-up timer (3 min silence → AI re-prompts) ───────────────────────
-
-  const FOLLOW_UP_TIMEOUT = 60 * 1000; // 60秒无回复则追问
-
-  const sendFollowUp = useCallback(() => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    followUpAttemptRef.current += 1;
-    console.log(`[follow_up] 前端发送追问 attempt=${followUpAttemptRef.current}`);
-    ws.send(JSON.stringify({ type: "follow_up", attempt: followUpAttemptRef.current }));
-    // Schedule next follow-up
-    followUpTimerRef.current = setTimeout(sendFollowUp, FOLLOW_UP_TIMEOUT);
-  }, []);
-
   useEffect(() => {
     // 仅在暂停变化时处理：暂停则清除计时器
     if (isPaused) {
@@ -764,6 +937,21 @@ export default function VoiceStudio() {
       return pausing;
     });
   }, [stopAll]);
+
+  const sendTextInput = useCallback(() => {
+    const text = textInput.trim();
+    if (!text) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    // 停止 AI 正在播放的音频（模拟打断）
+    interruptAI();
+    if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+
+    setTextInput("");
+    setAIState("thinking");
+    ws.send(JSON.stringify({ type: "text_input", text }));
+  }, [textInput, interruptAI]);
 
   const stateLabel =
     isPaused ? "已暂停" :
@@ -852,6 +1040,25 @@ export default function VoiceStudio() {
 
       {/* Bottom status + controls */}
       <div className="relative z-10 flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-6 py-4">
+        {/* Text input row */}
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="text"
+            value={textInput}
+            onChange={e => setTextInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTextInput(); } }}
+            placeholder="输入文字代替语音（按 Enter 发送）…"
+            className="flex-1 h-9 px-3 rounded-lg bg-muted/50 border border-border text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:bg-background transition-all"
+          />
+          <button
+            onClick={sendTextInput}
+            disabled={!textInput.trim()}
+            className="w-9 h-9 rounded-lg flex items-center justify-center bg-primary/15 border border-primary/30 text-primary hover:bg-primary/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
+          >
+            <Send size={14} />
+          </button>
+        </div>
+
         <div className="flex items-center justify-between">
           {/* Status indicator */}
           <div className="flex items-center gap-2.5">

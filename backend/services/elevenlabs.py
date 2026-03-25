@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import re
 from typing import AsyncIterator
 
 
@@ -11,6 +12,9 @@ _client = httpx.AsyncClient(
     limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
 )
 
+# 过滤 Scribe 可能残留的音效标注，如 (掌声)、[背景音乐]、(laughter) 等
+_AUDIO_EVENT_RE = re.compile(r"[\(\[\{][^\)\]\}]{1,30}[\)\]\}]")
+
 
 async def stt(audio_bytes: bytes, api_key: str, retries: int = 3, language_code: str = "zh", model_id: str = "scribe_v1") -> str:
     """语音转文字，使用 ElevenLabs Scribe，失败时自动重试"""
@@ -21,11 +25,18 @@ async def stt(audio_bytes: bytes, api_key: str, retries: int = 3, language_code:
                 f"{ELEVENLABS_BASE}/v1/speech-to-text",
                 headers={"xi-api-key": api_key},
                 files={"file": ("audio.webm", audio_bytes, "audio/webm")},
-                data={"model_id": model_id, "language_code": language_code},
+                data={
+                    "model_id": model_id,
+                    "language_code": language_code,
+                    "tag_audio_events": "false",  # 不标注环境音/非语音事件
+                },
             )
             response.raise_for_status()
             result = response.json()
-            return result.get("text", "")
+            text = result.get("text", "")
+            # 二次过滤：去掉括号包裹的音效描述
+            text = _AUDIO_EVENT_RE.sub("", text).strip()
+            return text
         except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
             last_exc = e
             if attempt < retries - 1:
@@ -33,25 +44,33 @@ async def stt(audio_bytes: bytes, api_key: str, retries: int = 3, language_code:
     raise last_exc
 
 
-async def tts(text: str, voice_id: str, api_key: str) -> bytes:
-    """文字转语音，返回 MP3 音频字节"""
-    response = await _client.post(
-        f"{ELEVENLABS_BASE}/v1/text-to-speech/{voice_id}",
-        headers={
-            "xi-api-key": api_key,
-            "Content-Type": "application/json",
-        },
-        json={
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
-            },
-        },
-    )
-    response.raise_for_status()
-    return response.content
+async def tts(text: str, voice_id: str, api_key: str, retries: int = 3) -> bytes:
+    """文字转语音，返回 MP3 音频字节，失败时自动重试"""
+    last_exc: Exception = RuntimeError("unknown")
+    for attempt in range(retries):
+        try:
+            response = await _client.post(
+                f"{ELEVENLABS_BASE}/v1/text-to-speech/{voice_id}",
+                headers={
+                    "xi-api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "text": text,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                    },
+                },
+            )
+            response.raise_for_status()
+            return response.content
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
+            last_exc = e
+            if attempt < retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+    raise last_exc
 
 
 async def tts_stream(text: str, voice_id: str, api_key: str) -> bytes:

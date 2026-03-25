@@ -1055,5 +1055,5 @@
   "assistant_voice_id": "cgSgspJ2msm6clMCkdW9",
   "content_model": "gpt-5.4",
   "content_provider_id": "6691daaf-e773-4268-ad16-c672b97bb75b",
-  "stt_model": "scribe_v1"
+  "stt_model": "scribe_v2"
 }

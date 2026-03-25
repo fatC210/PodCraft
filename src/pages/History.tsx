@@ -10,15 +10,16 @@ import {
 type FilterTab = "all" | "podcast";
 
 function EmptyState({ filter }: { filter: FilterTab }) {
+  const { t } = useI18n();
   const isPodcast = filter === "podcast";
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-up">
       <div className="w-16 h-16 rounded-full bg-surface-alt border border-border flex items-center justify-center mb-5">
         {isPodcast ? <Headphones size={24} className="text-muted-foreground/40" /> : <Archive size={24} className="text-muted-foreground/40" />}
       </div>
-      <p className="text-sm text-muted-foreground mb-1">暂无记录</p>
+      <p className="text-sm text-muted-foreground mb-1">{t.history.emptyTitle}</p>
       <p className="font-mono text-xs text-muted-foreground/60">
-        {isPodcast ? "生成的播客将在这里展示" : "你的任务记录将在这里显示"}
+        {isPodcast ? t.history.emptyPodcastDesc : t.history.emptyTasksDesc}
       </p>
     </div>
   );
@@ -116,16 +117,16 @@ export default function History() {
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-medium truncate">{item.title}</h3>
                       <span className="flex-shrink-0 font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/25">
-                        中断
+                        {t.history.interrupted}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 mt-1">
-                      <span className="font-mono text-[11px] text-muted-foreground">阶段：{item.stage_name}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{t.history.stageLabel}：{item.stage_name}</span>
                     </div>
                   </div>
 
                   <span className="font-mono text-[11px] text-muted-foreground flex-shrink-0">
-                    {new Date(item.created_at).toLocaleDateString("zh-CN")}
+                    {new Date(item.created_at).toLocaleDateString()}
                   </span>
 
                   <div className="flex items-center gap-1">
@@ -145,7 +146,7 @@ export default function History() {
           {/* 已完成的播客 — 长方形卡片 */}
           {filtered.length > 0 ? (
             <div className="space-y-2">
-              {showInterrupted && <p className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase px-1 mt-4">播客</p>}
+              {showInterrupted && <p className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase px-1 mt-4">{t.history.podcastsSection}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {filtered.map((item, i) => (
                   <div

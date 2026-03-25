@@ -9,7 +9,10 @@
       "WebFetch(domain:elevenlabs.io)",
       "Bash(python -c \"import backend.api.voice\")",
       "Bash(python -c \"import api.voice\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s http://localhost:8000/api/podcast/history)",
+      "Bash(curl -s --max-time 3 http://localhost:8000/health)"
     ]
   }
 }

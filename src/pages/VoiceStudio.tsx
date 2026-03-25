@@ -33,7 +33,8 @@ type WSMessage =
   | { type: "script_ready"; text: string }
   | { type: "generating_podcast" }
   | { type: "progress"; task: string }
-  | { type: "podcast_done"; id: string; audio_url: string }
+  | { type: "progress_podcast"; current: number; total: number; role: string }
+  | { type: "podcast_done"; id: string; audio_url: string; duration?: string; title?: string }
   | { type: "no_speech" }
   | { type: "error"; message: string };
 
@@ -160,14 +161,15 @@ function VoiceCards({ voices }: { voices: Voice[] }) {
 
 /** Script display card */
 function ScriptCard({ text }: { text: string }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const preview = text.slice(0, 300);
   const hasMore = text.length > 300;
   return (
     <div className="mt-2 max-w-sm bg-background/60 border border-border rounded-lg p-3">
       <div className="flex items-center justify-between mb-1.5">
-        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">脚本全文</p>
-        <span className="text-[10px] font-mono text-muted-foreground">{text.length} 字</span>
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{t.studio.scriptTitle}</p>
+        <span className="text-[10px] font-mono text-muted-foreground">{t.studio.scriptChars(text.length)}</span>
       </div>
       <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
         {expanded ? text : preview}{hasMore && !expanded ? "…" : ""}
@@ -177,7 +179,7 @@ function ScriptCard({ text }: { text: string }) {
           onClick={() => setExpanded(v => !v)}
           className="mt-2 text-[10px] font-mono text-primary hover:underline"
         >
-          {expanded ? "收起" : "展开全部"}
+          {expanded ? t.studio.collapse : t.studio.expand}
         </button>
       )}
     </div>
@@ -230,6 +232,7 @@ function MaterialsCard({ items }: { items: Array<{ url: string; title: string; s
 
 /** Single chat message bubble */
 function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
+  const { t } = useI18n();
   const isAI = msg.role === "ai";
 
   return (
@@ -247,7 +250,7 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
           )}
           <span className="text-[10px] text-muted-foreground/60 font-mono">{msg.timestamp}</span>
           {!isAI && (
-            <span className="text-[11px] font-semibold text-muted-foreground">你</span>
+            <span className="text-[11px] font-semibold text-muted-foreground">{t.studio.you}</span>
           )}
         </div>
 
@@ -280,7 +283,7 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
 
       {!isAI && (
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-[11px] font-bold text-muted-foreground mt-1">
-          你
+          {t.studio.you[0]?.toUpperCase()}
         </div>
       )}
     </div>
@@ -302,7 +305,7 @@ function translateBackendError(msg: string, t: ReturnType<typeof useI18n>["t"]):
 }
 
 export default function VoiceStudio() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const resumeId: string | undefined = (location.state as any)?.resumeId;
@@ -322,6 +325,7 @@ export default function VoiceStudio() {
   const [startTime] = useState(Date.now());
   const [aiName, setAiName] = useState("AI");
   const [textInput, setTextInput] = useState("");
+  const [podcastProgress, setPodcastProgress] = useState<{ current: number; total: number; role: string } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -556,8 +560,9 @@ export default function VoiceStudio() {
   const connectWebSocket = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const base = `${protocol}://localhost:8000/api/voice/stream`;
-    const wsUrl = resumeId ? `${base}?resume_id=${resumeId}` : base;
-    const ws = new WebSocket(wsUrl);
+    const params = new URLSearchParams({ ui_lang: locale });
+    if (resumeId) params.set("resume_id", resumeId);
+    const ws = new WebSocket(`${base}?${params}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -658,7 +663,7 @@ export default function VoiceStudio() {
             enqueueAudio(msg.data);
             break;
           case "progress": {
-            const label = msg.task === "searching" ? "搜索中…" : "生成脚本中…";
+            const label = msg.task === "searching" ? t.studio.searching : t.studio.generatingScript;
             pendingRichContent.current = { type: "loading", label };
             isWaitingContentRef.current = true;
             setMessages(prev => {
@@ -727,10 +732,15 @@ export default function VoiceStudio() {
           case "generating_podcast":
             setAIState("generating");
             isWaitingContentRef.current = true;
+            setPodcastProgress(null);
+            break;
+          case "progress_podcast":
+            setPodcastProgress({ current: msg.current, total: msg.total, role: msg.role });
             break;
           case "podcast_done":
             setAIState("listening");
             isWaitingContentRef.current = false;
+            setPodcastProgress(null);
             break;
           case "no_speech":
             setAIState("listening");
@@ -753,7 +763,7 @@ export default function VoiceStudio() {
     ws.onclose = () => {
       setAIState("connecting");
     };
-  }, [addMessage, enqueueAudio, scrollToBottom, resumeId]);
+  }, [addMessage, enqueueAudio, scrollToBottom, resumeId, locale]);
 
   // ── Microphone & VAD ──────────────────────────────────────────────────────
 
@@ -954,11 +964,11 @@ export default function VoiceStudio() {
   }, [textInput, interruptAI]);
 
   const stateLabel =
-    isPaused ? "已暂停" :
+    isPaused ? t.studio.paused :
     aiState === "connecting" ? t.studio.connecting :
     aiState === "speaking" ? t.studio.speaking :
     aiState === "thinking" ? t.studio.processing :
-    aiState === "generating" ? (t.studio.generatingPodcast ?? "正在生成播客…") :
+    aiState === "generating" ? (t.studio.generatingPodcast ?? t.studio.generatingScript) :
     t.studio.listening;
 
   return (
@@ -1027,7 +1037,7 @@ export default function VoiceStudio() {
               </div>
               <p className="text-sm text-muted-foreground font-mono">{aiName}</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
-                {aiState === "connecting" ? t.studio.connecting : "等待对话开始…"}
+                {aiState === "connecting" ? t.studio.connecting : t.studio.waitingStart}
               </p>
             </div>
           </div>
@@ -1047,7 +1057,7 @@ export default function VoiceStudio() {
             value={textInput}
             onChange={e => setTextInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTextInput(); } }}
-            placeholder="输入文字代替语音（按 Enter 发送）…"
+            placeholder={t.studio.textPlaceholder}
             className="flex-1 h-9 px-3 rounded-lg bg-muted/50 border border-border text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:bg-background transition-all"
           />
           <button
@@ -1058,6 +1068,24 @@ export default function VoiceStudio() {
             <Send size={14} />
           </button>
         </div>
+
+        {/* Podcast generation progress bar */}
+        {aiState === "generating" && podcastProgress && (
+          <div className="mb-3 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+              <span>
+                {t.studio.podcastProgress(podcastProgress.current, podcastProgress.total, podcastProgress.role)}
+              </span>
+              <span className="text-primary">{Math.round((podcastProgress.current / podcastProgress.total) * 100)}%</span>
+            </div>
+            <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                style={{ width: `${(podcastProgress.current / podcastProgress.total) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between">
           {/* Status indicator */}
@@ -1096,7 +1124,7 @@ export default function VoiceStudio() {
                   ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
                   : "bg-surface-alt border border-border text-foreground hover:border-amber-500/30"
               }`}
-              title={isPaused ? "继续对话" : "暂停对话"}
+              title={isPaused ? t.studio.resumeSession : t.studio.pauseSession}
             >
               {isPaused ? <Play size={16} /> : <Pause size={16} />}
             </button>

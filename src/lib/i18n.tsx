@@ -70,6 +70,7 @@ const zh = {
     expand: "展开全部",
     collapse: "收起",
     podcastProgress: (current: number, total: number, role: string) => `正在合成第 ${current}/${total} 段 · ${role}`,
+    confirmBtns: ["确认素材，继续", "确认参数，生成脚本", "确认脚本，选择音色", "确认音色，生成播客"],
   },
   history: {
     label: "历史记录",
@@ -208,6 +209,7 @@ const en: Translations = {
     expand: "Show all",
     collapse: "Collapse",
     podcastProgress: (current: number, total: number, role: string) => `Synthesizing ${current}/${total} · ${role}`,
+    confirmBtns: ["Confirm Materials", "Confirm Params & Generate Script", "Confirm Script & Choose Voice", "Confirm Voice & Generate Podcast"],
   },
   history: {
     label: "HISTORY",

@@ -12,7 +12,10 @@
       "Bash(python:*)",
       "Bash(curl -s http://localhost:8000/health)",
       "Bash(curl -s http://localhost:8000/api/podcast/history)",
-      "Bash(curl -s --max-time 3 http://localhost:8000/health)"
+      "Bash(curl -s --max-time 3 http://localhost:8000/health)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(node_modules/.bin/vite build:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause, Send } from "lucide-react";
+import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause, Send, CheckCircle2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { fetchSettings, fetchVoices, type Voice } from "@/lib/api";
 
@@ -11,6 +11,7 @@ type AIState = "connecting" | "speaking" | "listening" | "thinking" | "generatin
 type RichContent =
   | { type: "voices"; voices: Voice[] }
   | { type: "script"; text: string }
+  | { type: "script_streaming"; text: string }
   | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> }
   | { type: "loading"; label: string };
 
@@ -31,6 +32,7 @@ type WSMessage =
   | { type: "stage_change"; stage: number }
   | { type: "materials"; items: Array<{ url: string; title: string; snippet: string }> }
   | { type: "script_ready"; text: string }
+  | { type: "script_chunk"; text: string }
   | { type: "generating_podcast" }
   | { type: "progress"; task: string }
   | { type: "progress_podcast"; current: number; total: number; role: string }
@@ -160,7 +162,7 @@ function VoiceCards({ voices }: { voices: Voice[] }) {
 }
 
 /** Script display card */
-function ScriptCard({ text }: { text: string }) {
+function ScriptCard({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const preview = text.slice(0, 300);
@@ -168,11 +170,25 @@ function ScriptCard({ text }: { text: string }) {
   return (
     <div className="mt-2 max-w-sm bg-background/60 border border-border rounded-lg p-3">
       <div className="flex items-center justify-between mb-1.5">
-        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{t.studio.scriptTitle}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{t.studio.scriptTitle}</p>
+          {streaming && (
+            <div className="flex gap-0.5">
+              {[0, 1, 2].map(i => (
+                <div
+                  key={i}
+                  className="w-1 h-1 rounded-full bg-primary/60"
+                  style={{ animation: `bounce 1s ease-in-out ${i * 160}ms infinite` }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
         <span className="text-[10px] font-mono text-muted-foreground">{t.studio.scriptChars(text.length)}</span>
       </div>
       <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">
         {expanded ? text : preview}{hasMore && !expanded ? "…" : ""}
+        {streaming && <span className="inline-block w-0.5 h-3 bg-primary/70 ml-0.5 animate-pulse align-middle" />}
       </p>
       {hasMore && (
         <button
@@ -231,7 +247,12 @@ function MaterialsCard({ items }: { items: Array<{ url: string; title: string; s
 }
 
 /** Single chat message bubble */
-function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
+function ChatMessage({ msg, aiName, confirmLabel, onConfirm }: {
+  msg: Message;
+  aiName: string;
+  confirmLabel?: string;
+  onConfirm?: () => void;
+}) {
   const { t } = useI18n();
   const isAI = msg.role === "ai";
 
@@ -273,11 +294,23 @@ function ChatMessage({ msg, aiName }: { msg: Message; aiName: string }) {
         {isAI && msg.richContent?.type === "script" && (
           <ScriptCard text={msg.richContent.text} />
         )}
+        {isAI && msg.richContent?.type === "script_streaming" && (
+          <ScriptCard text={msg.richContent.text} streaming />
+        )}
         {isAI && msg.richContent?.type === "materials" && (
           <MaterialsCard items={msg.richContent.items} />
         )}
         {isAI && msg.richContent?.type === "loading" && (
           <LoadingIndicator label={msg.richContent.label} />
+        )}
+        {isAI && confirmLabel && onConfirm && (
+          <button
+            onClick={onConfirm}
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/50 bg-primary/10 text-primary text-xs font-mono hover:bg-primary/20 hover:border-primary/70 transition-all active:scale-95"
+          >
+            <CheckCircle2 size={12} />
+            {confirmLabel}
+          </button>
         )}
       </div>
 
@@ -326,6 +359,10 @@ export default function VoiceStudio() {
   const [aiName, setAiName] = useState("AI");
   const [textInput, setTextInput] = useState("");
   const [podcastProgress, setPodcastProgress] = useState<{ current: number; total: number; role: string } | null>(null);
+  const [scriptGenerating, setScriptGenerating] = useState(false);
+  const [showConfirmBtn, setShowConfirmBtn] = useState(false);
+  // confirmBtnStage 与 showConfirmBtn 同步设置，避免因 currentStage 异步更新导致标签错误
+  const [confirmBtnStage, setConfirmBtnStage] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -344,6 +381,7 @@ export default function VoiceStudio() {
   const isPausedRef = useRef(false);
   const discardAudioRef = useRef(false);
   const pendingRichContent = useRef<RichContent | null>(null);
+  const streamingScriptTextRef = useRef<string>("");
   const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followUpAttemptRef = useRef(0);
   const interruptCheckingRef = useRef(false);
@@ -405,7 +443,7 @@ export default function VoiceStudio() {
 
   const shouldDeferFollowUp = useCallback(() => {
     if (isWaitingContentRef.current) return true;
-    if (messagesRef.current.some(m => m.richContent?.type === "loading")) return true;
+    if (messagesRef.current.some(m => m.richContent?.type === "loading" || m.richContent?.type === "script_streaming")) return true;
     if (aiStateRef.current === "generating") return true;
     return false;
   }, []);
@@ -577,6 +615,7 @@ export default function VoiceStudio() {
           case "session_id":
             break;
           case "session_restored": {
+            streamingScriptTextRef.current = "";
             setCurrentStage(msg.stage);
 
             // 把 rich content 挂到历史中对应的那条 AI 消息下
@@ -630,6 +669,8 @@ export default function VoiceStudio() {
               clearTimeout(followUpTimerRef.current);
               followUpTimerRef.current = null;
             }
+            setShowConfirmBtn(false);
+            setConfirmBtnStage(null);
             break;
           case "ai_text": {
             if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
@@ -656,6 +697,14 @@ export default function VoiceStudio() {
             });
             setCurrentStage(msg.stage);
             setAIState("thinking");
+            // 可确认阶段（1-4）且当前无生成任务时，显示确认按钮
+            if (msg.stage >= 1 && msg.stage <= 4 && !isWaitingContentRef.current) {
+              setShowConfirmBtn(true);
+              setConfirmBtnStage(msg.stage);
+            } else {
+              setShowConfirmBtn(false);
+              setConfirmBtnStage(null);
+            }
             scrollToBottom();
             break;
           }
@@ -666,6 +715,13 @@ export default function VoiceStudio() {
             const label = msg.task === "searching" ? t.studio.searching : t.studio.generatingScript;
             pendingRichContent.current = { type: "loading", label };
             isWaitingContentRef.current = true;
+            setShowConfirmBtn(false);
+            setConfirmBtnStage(null);
+            if (msg.task !== "searching") {
+              // 生成脚本：先将进度条推进到"确认脚本"阶段，再显示生成进度
+              setCurrentStage(prev => Math.max(prev, 3));
+              setScriptGenerating(true);
+            }
             setMessages(prev => {
               const last = prev[prev.length - 1];
               if (
@@ -704,20 +760,41 @@ export default function VoiceStudio() {
             pendingRichContent.current = { type: "materials", items: msg.items };
             break;
           }
-          case "script_ready": {
-            // 清除过渡消息的 loading，将脚本卡挂到下一条 ai_text 消息下方
-            isWaitingContentRef.current = false;
+          case "script_chunk": {
+            streamingScriptTextRef.current += msg.text;
+            const accumulated = streamingScriptTextRef.current;
             setMessages(prev => {
               for (let i = prev.length - 1; i >= 0; i--) {
-                if (prev[i].richContent?.type === "loading") {
+                const rc = prev[i].richContent;
+                if (rc?.type === "loading" || rc?.type === "script_streaming") {
                   const updated = [...prev];
-                  updated[i] = { ...updated[i], richContent: undefined };
+                  updated[i] = { ...updated[i], richContent: { type: "script_streaming", text: accumulated } };
                   return updated;
                 }
               }
               return prev;
             });
-            pendingRichContent.current = { type: "script", text: msg.text };
+            scrollToBottom();
+            break;
+          }
+          case "script_ready": {
+            // 流式完成：将 script_streaming 卡片原地转为最终 script
+            isWaitingContentRef.current = false;
+            streamingScriptTextRef.current = "";
+            setScriptGenerating(false);
+            setMessages(prev => {
+              for (let i = prev.length - 1; i >= 0; i--) {
+                const rc = prev[i].richContent;
+                if (rc?.type === "script_streaming" || rc?.type === "loading") {
+                  const updated = [...prev];
+                  updated[i] = { ...updated[i], richContent: { type: "script", text: msg.text } };
+                  return updated;
+                }
+              }
+              return prev;
+            });
+            // 脚本已在原地展示，ai_text 消息无需再挂卡片
+            pendingRichContent.current = null;
             break;
           }
           case "stage_change":
@@ -732,6 +809,8 @@ export default function VoiceStudio() {
           case "generating_podcast":
             setAIState("generating");
             isWaitingContentRef.current = true;
+            setShowConfirmBtn(false);
+            setConfirmBtnStage(null);
             setPodcastProgress(null);
             break;
           case "progress_podcast":
@@ -963,6 +1042,17 @@ export default function VoiceStudio() {
     ws.send(JSON.stringify({ type: "text_input", text }));
   }, [textInput, interruptAI]);
 
+  const sendConfirm = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    interruptAI();
+    if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+    setShowConfirmBtn(false);
+    setConfirmBtnStage(null);
+    setAIState("thinking");
+    ws.send(JSON.stringify({ type: "confirm_stage" }));
+  }, [interruptAI]);
+
   const stateLabel =
     isPaused ? t.studio.paused :
     aiState === "connecting" ? t.studio.connecting :
@@ -1042,9 +1132,19 @@ export default function VoiceStudio() {
             </div>
           </div>
         )}
-        {messages.map((msg) => (
-          <ChatMessage key={msg.id} msg={msg} aiName={aiName} />
-        ))}
+        {messages.map((msg, index) => {
+          const isLastMsg = index === messages.length - 1;
+          const canConfirm = isLastMsg && msg.role === "ai" && showConfirmBtn && confirmBtnStage !== null;
+          return (
+            <ChatMessage
+              key={msg.id}
+              msg={msg}
+              aiName={aiName}
+              confirmLabel={canConfirm ? t.studio.confirmBtns[confirmBtnStage - 1] : undefined}
+              onConfirm={canConfirm ? sendConfirm : undefined}
+            />
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 
@@ -1068,6 +1168,30 @@ export default function VoiceStudio() {
             <Send size={14} />
           </button>
         </div>
+
+        {/* Script generation progress bar */}
+        {scriptGenerating && (
+          <div className="mb-3 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+              <span>{t.studio.generatingScript}</span>
+              <div className="flex gap-0.5">
+                {[0, 1, 2].map(i => (
+                  <div
+                    key={i}
+                    className="w-1 h-1 rounded-full bg-primary/60"
+                    style={{ animation: `bounce 1s ease-in-out ${i * 160}ms infinite` }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary/70"
+                style={{ animation: "indeterminate 1.6s ease-in-out infinite" }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Podcast generation progress bar */}
         {aiState === "generating" && podcastProgress && (

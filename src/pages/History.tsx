@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Trash2, Clock, Headphones, Archive, Loader2, PhoneCall, Play, ChevronRight } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -32,16 +32,34 @@ export default function History() {
   const [records, setRecords] = useState<PodcastHistoryItem[]>([]);
   const [interrupted, setInterrupted] = useState<InterruptedSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  const loadData = (initial = false) => {
     Promise.all([
       fetchHistory().catch(() => [] as PodcastHistoryItem[]),
-      fetchInterruptedSessions().catch(() => [] as InterruptedSession[]),
+      initial ? fetchInterruptedSessions().catch(() => [] as InterruptedSession[]) : Promise.resolve(null),
     ]).then(([hist, inter]) => {
       setRecords(hist);
-      setInterrupted(inter);
-    }).finally(() => setLoading(false));
+      if (inter !== null) setInterrupted(inter);
+    }).finally(() => { if (initial) setLoading(false); });
+  };
+
+  useEffect(() => {
+    loadData(true);
   }, []);
+
+  // 有生成中的播客时每 3 秒轮询一次
+  useEffect(() => {
+    const hasGenerating = records.some(r => r.status === "generating");
+    if (hasGenerating) {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(() => loadData(false), 3000);
+      }
+    } else {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    }
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [records]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -143,46 +161,83 @@ export default function History() {
             </div>
           )}
 
-          {/* 已完成的播客 — 长方形卡片 */}
+          {/* 已完成的播客 + 生成中的播客 */}
           {filtered.length > 0 ? (
             <div className="space-y-2">
               {showInterrupted && <p className="font-mono text-[10px] text-muted-foreground tracking-widest uppercase px-1 mt-4">{t.history.podcastsSection}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filtered.map((item, i) => (
-                  <div
-                    key={item.id}
-                    onClick={() => navigate(`/podcast/${item.id}`)}
-                    className="group relative bg-card border border-border rounded-lg overflow-hidden cursor-pointer hover:border-primary/30 hover:shadow-md transition-all duration-200 animate-fade-up"
-                    style={{ animationDelay: `${(interrupted.length + i + 2) * 60}ms` }}
-                  >
-                    {/* Cover gradient */}
-                    <div className="h-20 bg-gradient-to-br from-primary/15 via-primary/5 to-transparent flex items-end px-4 py-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
-                        <Play size={13} className="text-primary ml-0.5" />
-                      </div>
-                    </div>
-
-                    {/* Info */}
-                    <div className="px-4 py-3">
-                      <h3 className="text-sm font-semibold truncate mb-1">{item.title}</h3>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Clock size={10} /> {item.duration}
-                        </span>
-                        <span className="font-mono text-[11px] text-muted-foreground">{item.language}</span>
-                        <span className="font-mono text-[11px] text-muted-foreground ml-auto">{item.date}</span>
-                      </div>
-                    </div>
-
-                    {/* Delete */}
-                    <button
-                      onClick={(e) => handleDelete(e, item.id)}
-                      className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 bg-background/80 text-muted-foreground hover:text-destructive transition-all active:scale-95"
+                {filtered.map((item, i) => {
+                  const isGenerating = item.status === "generating";
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => !isGenerating && navigate(`/podcast/${item.id}`)}
+                      className={`group relative bg-card border rounded-lg overflow-hidden transition-all duration-200 animate-fade-up ${
+                        isGenerating
+                          ? "border-primary/30 cursor-default"
+                          : "border-border cursor-pointer hover:border-primary/30 hover:shadow-md"
+                      }`}
+                      style={{ animationDelay: `${(interrupted.length + i + 2) * 60}ms` }}
                     >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
+                      {/* Cover */}
+                      <div className={`h-20 flex items-end px-4 py-3 ${isGenerating ? "bg-gradient-to-br from-primary/20 via-primary/10 to-transparent" : "bg-gradient-to-br from-primary/15 via-primary/5 to-transparent"}`}>
+                        <div className={`w-8 h-8 rounded-full border flex items-center justify-center transition-colors ${
+                          isGenerating
+                            ? "bg-primary/30 border-primary/50"
+                            : "bg-primary/20 border-primary/30 group-hover:bg-primary/30"
+                        }`}>
+                          {isGenerating
+                            ? <Loader2 size={13} className="text-primary animate-spin" />
+                            : <Play size={13} className="text-primary ml-0.5" />}
+                        </div>
+                      </div>
+
+                      {/* Info */}
+                      <div className="px-4 py-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-sm font-semibold truncate flex-1">{item.title}</h3>
+                          {isGenerating && (
+                            <span className="flex-shrink-0 font-mono text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/25 animate-pulse">
+                              {t.history.statusGenerating}
+                            </span>
+                          )}
+                        </div>
+                        {isGenerating && item.total ? (
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+                              <span>{item.current}/{item.total} 段</span>
+                              <span className="text-primary">{Math.round(((item.current ?? 0) / item.total) * 100)}%</span>
+                            </div>
+                            <div className="h-0.5 w-full rounded-full bg-muted overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary transition-all duration-500 ease-out"
+                                style={{ width: `${((item.current ?? 0) / item.total) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-[11px] text-muted-foreground flex items-center gap-1">
+                              <Clock size={10} /> {item.duration}
+                            </span>
+                            <span className="font-mono text-[11px] text-muted-foreground">{item.language}</span>
+                            <span className="font-mono text-[11px] text-muted-foreground ml-auto">{item.date}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Delete (completed only) */}
+                      {!isGenerating && (
+                        <button
+                          onClick={(e) => handleDelete(e, item.id)}
+                          className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 bg-background/80 text-muted-foreground hover:text-destructive transition-all active:scale-95"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : !showInterrupted ? (

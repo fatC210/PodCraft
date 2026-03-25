@@ -7,7 +7,8 @@ import json
 import uuid
 from datetime import datetime
 from services.elevenlabs import stt, tts
-from services.llm import chat
+from api.generating_registry import register as reg_register, update_progress as reg_update, unregister as reg_unregister
+from services.llm import chat, chat_stream
 from services.firecrawl import search
 from config import get_settings
 from database import (
@@ -449,6 +450,19 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
                         except Exception as e:
                             await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
 
+                elif data.get("type") == "confirm_stage":
+                    # 按钮确认，直接执行当前阶段的确认动作，不加入用户历史
+                    ai_response = await handle_confirm_stage(session, settings, websocket)
+                    if ai_response:
+                        session["history"].append({"role": "assistant", "content": ai_response})
+                        await websocket.send_json({"type": "ai_text", "text": ai_response, "stage": session["stage"]})
+                        try:
+                            audio_bytes = await tts(ai_response, _assistant_voice(settings), settings.get("elevenlabs_key", ""))
+                            audio_b64 = base64.b64encode(audio_bytes).decode()
+                            await websocket.send_json({"type": "audio", "data": audio_b64})
+                        except Exception as e:
+                            await websocket.send_json({"type": "error", "message": f"TTS 失败: {str(e)}"})
+
                 elif data.get("type") == "follow_up":
                     attempt = data.get("attempt", 1)
                     print(f"[follow_up] 收到追问请求 attempt={attempt}", flush=True)
@@ -621,12 +635,16 @@ async def _run_stage2_script_generation(
         f"语言要求：主要使用【{script_lang}】撰写，专有名词、术语可保留原文。\n"
         f'要求：2个角色对话，自然流畅，约5分钟（约800字），格式为「角色名：台词」。'
     )
-    script = await chat(
+    chunks: list[str] = []
+    async for chunk in chat_stream(
         [{"role": "user", "content": script_prompt}],
         active_provider["base_url"],
         active_provider["api_key"],
         active_model,
-    )
+    ):
+        chunks.append(chunk)
+        await websocket.send_json({"type": "script_chunk", "text": chunk})
+    script = "".join(chunks)
     session["script"] = script
     await websocket.send_json({"type": "script_ready", "text": script})
     return _s(ui_lang, "script_done")(len(script))
@@ -659,6 +677,43 @@ async def _build_search_query(user_text: str, settings: dict) -> str:
         return query if query else user_text
     except Exception:
         return user_text
+
+
+async def handle_confirm_stage(session: dict, settings: dict, websocket: WebSocket) -> str:
+    """处理前端确认按钮点击，直接执行当前阶段的确认动作"""
+    stage = session.get("stage", 0)
+    ui_lang = session.get("ui_lang", "zh")
+    active_provider, active_model = _content_provider_and_model(settings)
+
+    if stage == 1:
+        # 素材确认 → 进入参数阶段
+        session["stage"] = 2
+        await websocket.send_json({"type": "stage_change", "stage": 2})
+        return _s(ui_lang, "materials_next")
+
+    elif stage == 2:
+        # 参数确认 → 直接生成脚本
+        if not active_provider:
+            return _s(ui_lang, "no_provider_short")
+        return await _run_stage2_script_generation(session, settings, websocket, active_provider, active_model)
+
+    elif stage == 3:
+        # 脚本确认 → 进入音色选择
+        if not session.get("script"):
+            return _s(ui_lang, "no_provider_short")
+        session["stage"] = 4
+        await websocket.send_json({"type": "stage_change", "stage": 4})
+        return _s(ui_lang, "script_confirmed")
+
+    elif stage == 4:
+        # 音色确认 → 生成播客
+        session["stage"] = 5
+        await websocket.send_json({"type": "stage_change", "stage": 5})
+        await websocket.send_json({"type": "generating_podcast"})
+        asyncio.create_task(_generate_podcast_task(session, settings, websocket))
+        return _s(ui_lang, "podcast_starting")
+
+    return ""
 
 
 async def handle_stage(session: dict, user_text: str, settings: dict, websocket: WebSocket) -> str:
@@ -850,12 +905,16 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
                 f"用户修改意见：{user_text}\n"
                 f'要求：2个角色对话，自然流畅，约5分钟（约800字），格式为「角色名：台词」。'
             )
-            script = await chat(
+            regen_chunks: list[str] = []
+            async for chunk in chat_stream(
                 [{"role": "user", "content": script_prompt}],
                 active_provider["base_url"],
                 active_provider["api_key"],
                 active_model,
-            )
+            ):
+                regen_chunks.append(chunk)
+                await websocket.send_json({"type": "script_chunk", "text": chunk})
+            script = "".join(regen_chunks)
             session["script"] = script
             await websocket.send_json({"type": "script_ready", "text": script})
             return _s(ui_lang, "script_redone")(len(script))
@@ -897,6 +956,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
 
 async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSocket):
     """后台异步生成播客，通过 WebSocket 发送逐段进度"""
+    podcast_id = str(uuid.uuid4())
     try:
         import re as _re2
 
@@ -918,8 +978,12 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
             await websocket.send_json({"type": "error", "message": "脚本解析失败，无法生成播客"})
             return
 
-        api_key = settings.get("elevenlabs_key", "")
+        # 提前生成标题并注册到 generating registry，让历史页可见
+        title = await _generate_title(session["history"], settings)
         total = len(segments)
+        reg_register(podcast_id, title, total)
+
+        api_key = settings.get("elevenlabs_key", "")
         audio_chunks = []
 
         for i, seg in enumerate(segments):
@@ -929,11 +993,13 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
                 "total": total,
                 "role": seg["role"],
             })
+            reg_update(podcast_id, i + 1)
             try:
                 chunk = await tts(seg["text"], seg["voice_id"], api_key)
                 audio_chunks.append(chunk)
             except Exception as e:
                 await websocket.send_json({"type": "error", "message": f"TTS 生成失败: {str(e)}"})
+                reg_unregister(podcast_id)
                 return
 
         # 合并音频
@@ -966,13 +1032,11 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
                 for s in segments
             ]
 
-        podcast_id = str(uuid.uuid4())
         audio_filename = f"{podcast_id}.mp3"
         audio_path = STORAGE_DIR / audio_filename
         audio_path.write_bytes(combined_bytes)
 
         params = session.get("params", {})
-        title = await _generate_title(session["history"], settings)
         podcast_data = {
             "id": podcast_id,
             "title": title,
@@ -986,6 +1050,7 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
             "created_at": datetime.now().isoformat(),
         }
         save_podcast(podcast_data)
+        reg_unregister(podcast_id)
 
         await websocket.send_json({
             "type": "podcast_done",
@@ -996,6 +1061,7 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
         })
 
     except Exception as e:
+        reg_unregister(podcast_id)
         try:
             await websocket.send_json({"type": "error", "message": f"播客生成失败: {str(e)}"})
         except Exception:

@@ -140,14 +140,17 @@ export type PodcastSegment = {
 export type PodcastHistoryItem = {
   id: string;
   title: string;
-  duration: string;
-  date: string;
-  language: string;
+  duration: string | null;
+  date: string | null;
+  language: string | null;
   materials: number;
-  audio_url: string;
+  audio_url: string | null;
   script?: string;
   segments_json?: string;
-  created_at: string;
+  created_at?: string;
+  status?: "completed" | "generating";
+  current?: number;
+  total?: number;
 };
 
 export function generatePodcast(params: {

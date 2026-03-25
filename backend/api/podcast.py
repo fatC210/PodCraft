@@ -10,6 +10,7 @@ from typing import Dict, Optional
 from config import get_settings
 from services.elevenlabs import tts
 from database import save_podcast, get_podcasts, get_podcast_by_id, delete_podcast as db_delete_podcast
+from api.generating_registry import get_all as get_generating
 
 router = APIRouter()
 
@@ -139,14 +140,20 @@ async def generate_podcast(body: GeneratePodcastRequest):
 
 @router.get("/api/podcast/history")
 def podcast_history():
-    podcasts = get_podcasts()
-    return [
-        {
-            **p,
-            "audio_url": f"/storage/{p['audio_path']}" if p.get("audio_path") else None,
-        }
-        for p in podcasts
+    completed = [
+        {**p, "audio_url": f"/storage/{p['audio_path']}" if p.get("audio_path") else None, "status": "completed"}
+        for p in get_podcasts()
     ]
+    generating = [
+        {
+            "id": g["id"], "title": g["title"], "status": "generating",
+            "current": g["current"], "total": g["total"],
+            "duration": None, "date": None, "language": None,
+            "materials": 0, "audio_url": None,
+        }
+        for g in get_generating()
+    ]
+    return generating + completed
 
 
 @router.get("/api/podcast/{podcast_id}")

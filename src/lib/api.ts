@@ -49,14 +49,14 @@ export function fetchProviders(): Promise<Provider[]> {
   return request("/settings/providers");
 }
 
-export function saveProvider(provider: Omit<Provider, "id" | "models" | "active">): Promise<Provider> {
+export function saveProvider(provider: Omit<Provider, "id" | "active"> & { models?: string[] }): Promise<Provider> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   return request("/settings/providers", { method: "POST", body: JSON.stringify(provider), signal: ctrl.signal })
     .finally(() => clearTimeout(timer));
 }
 
-export function updateProvider(id: string, provider: { name: string; base_url: string; api_key?: string }): Promise<Provider> {
+export function updateProvider(id: string, provider: { name: string; base_url: string; api_key?: string; models?: string[] }): Promise<Provider> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   return request(`/settings/providers/${id}`, { method: "PUT", body: JSON.stringify(provider), signal: ctrl.signal })

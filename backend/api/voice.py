@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime
 from services.elevenlabs import stt, tts
-from api.generating_registry import register as reg_register, update_progress as reg_update, unregister as reg_unregister
+from api.generating_registry import register as reg_register, update_progress as reg_update, unregister as reg_unregister, update_title as reg_update_title, get_title as reg_get_title
 from services.llm import chat, chat_stream
 from services.firecrawl import search
 from config import get_settings
@@ -206,23 +206,31 @@ FOLLOW_UP_FALLBACKS = {
 }
 
 
-async def _generate_title(history: list, settings: dict) -> str:
+async def _generate_title(history: list, settings: dict, ui_lang: str = "zh") -> str:
     """根据对话中用户描述的播客主题生成标题"""
     user_msgs = [m["content"] for m in history if m.get("role") == "user"][:6]
     if not user_msgs:
-        return "未命名任务"
+        return "Unknown title" if ui_lang == "en" else "未命名任务"
 
     try:
         provider, model = _content_provider_and_model(settings)
         if not provider:
             raise ValueError("no provider")
+        if ui_lang == "en":
+            system_content = (
+                "You are a title generator. From the user's messages, identify the podcast topic they want to create, "
+                "and summarize it in no more than 8 words as a task title. "
+                "Output only the title itself, no quotes, no punctuation marks, no explanation."
+            )
+        else:
+            system_content = (
+                "你是标题生成助手。从用户的发言中找出他想制作的播客主题，"
+                "用不超过10个字概括这个主题作为任务标题。"
+                "只输出标题本身，不加引号、书名号、「」等符号，不加任何解释。"
+            )
         title = await chat(
             messages=[
-                {"role": "system", "content": (
-                    "你是标题生成助手。从用户的发言中找出他想制作的播客主题，"
-                    "用不超过10个字概括这个主题作为任务标题。"
-                    "只输出标题本身，不加引号、书名号、「」等符号，不加任何解释。"
-                )},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": "\n".join(user_msgs)},
             ],
             base_url=provider["base_url"],
@@ -230,13 +238,16 @@ async def _generate_title(history: list, settings: dict) -> str:
             model=model,
         )
         title = title.strip().strip('"\'').strip("《》「」【】").replace("\n", "")
-        return title[:20] if title else "未命名任务"
+        return title[:20] if title else ("Unknown title" if ui_lang == "en" else "未命名任务")
     except Exception:
         # 降级：从第一条用户消息中去掉口语前缀
         import re
         first = user_msgs[0].strip()
-        cleaned = re.sub(r"我想(做|制作|录制)?一?(期|个|篇)?[关于的]?播客[关于的]?", "", first).strip()
-        text = cleaned or first
+        if ui_lang == "en":
+            text = first
+        else:
+            cleaned = re.sub(r"我想(做|制作|录制)?一?(期|个|篇)?[关于的]?播客[关于的]?", "", first).strip()
+            text = cleaned or first
         return text[:15] + ("…" if len(text) > 15 else "")
 
 
@@ -415,7 +426,11 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
 
                     session["history"].append({"role": "user", "content": clean_transcript})
 
-                    ai_response = await handle_stage(session, clean_transcript, settings, websocket)
+                    try:
+                        ai_response = await handle_stage(session, clean_transcript, settings, websocket, session_id)
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "message": str(e)})
+                        continue
 
                     if ai_response:
                         session["history"].append({"role": "assistant", "content": ai_response})
@@ -437,7 +452,11 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
                     await websocket.send_json({"type": "transcript", "text": user_text})
                     session["history"].append({"role": "user", "content": user_text})
 
-                    ai_response = await handle_stage(session, user_text, settings, websocket)
+                    try:
+                        ai_response = await handle_stage(session, user_text, settings, websocket, session_id)
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "message": str(e)})
+                        continue
 
                     if ai_response:
                         session["history"].append({"role": "assistant", "content": ai_response})
@@ -452,7 +471,11 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
 
                 elif data.get("type") == "confirm_stage":
                     # 按钮确认，直接执行当前阶段的确认动作，不加入用户历史
-                    ai_response = await handle_confirm_stage(session, settings, websocket)
+                    try:
+                        ai_response = await handle_confirm_stage(session, settings, websocket, session_id)
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "message": str(e)})
+                        continue
                     if ai_response:
                         session["history"].append({"role": "assistant", "content": ai_response})
                         await websocket.send_json({"type": "ai_text", "text": ai_response, "stage": session["stage"]})
@@ -487,7 +510,7 @@ async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(No
             has_user_msg = any(m.get("role") == "user" for m in sess.get("history", []))
             if has_user_msg:
                 try:
-                    title = await _generate_title(sess["history"], settings)
+                    title = await _generate_title(sess["history"], settings, sess.get("ui_lang", "zh"))
                     save_interrupted_session({
                         "id": session_id,
                         "title": title,
@@ -650,24 +673,45 @@ async def _run_stage2_script_generation(
     return _s(ui_lang, "script_done")(len(script))
 
 
-async def _build_search_query(user_text: str, settings: dict) -> str:
+async def _build_search_query(user_text: str, settings: dict, history: list = None, ui_lang: str = "zh") -> str:
     """从用户的播客主题描述中提炼搜索关键词，面向文章/资讯而非播客"""
     provider, model = _content_provider_and_model(settings)
+
+    # 构建带历史上下文的输入文本
+    context_text = user_text
+    if history:
+        prev_user_msgs = [m["content"] for m in history if m.get("role") == "user"]
+        # 排除与当前输入相同的最后一条（避免重复）
+        if prev_user_msgs and prev_user_msgs[-1] == user_text:
+            prev_user_msgs = prev_user_msgs[:-1]
+        if prev_user_msgs:
+            context_text = f"对话背景：{'→'.join(prev_user_msgs[-3:])}\n当前方向：{user_text}"
+
     if not provider:
         # 无 LLM 时简单去掉口语化前缀
         import re
-        cleaned = re.sub(r"我想(做|制作|创建|录制)?一?(期|个|篇|档)?[关于的]?播客[关于的]?", "", user_text).strip()
+        cleaned = re.sub(r"我想(做|制作|创建|录制)?一?(期|个|篇|档)?[关于的]?播客[关于的]?", "", context_text).strip()
         return cleaned or user_text
+
+    if ui_lang == "en":
+        system_prompt = (
+            "You are a search keyword assistant. The user wants to create a podcast. "
+            "Extract the core topic from the provided context and current direction, "
+            "generate a short English search query (max 10 words, without the word 'podcast', "
+            "output only the query with no explanation)."
+        )
+    else:
+        system_prompt = (
+            "你是搜索词提炼助手。用户想制作一期播客，请从提供的对话背景和当前方向中提取核心主题，"
+            "生成一个适合搜索相关文章、报告、资讯的简短搜索词（不超过15字，不含'播客'二字，"
+            "直接输出搜索词，不加任何解释）。"
+        )
 
     try:
         result = await chat(
             messages=[
-                {"role": "system", "content": (
-                    "你是搜索词提炼助手。用户想制作一期播客，请从他的描述中提取核心主题，"
-                    "生成一个适合搜索相关文章、报告、资讯的简短搜索词（不超过15字，不含'播客'二字，"
-                    "直接输出搜索词，不加任何解释）。"
-                )},
-                {"role": "user", "content": user_text},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_text},
             ],
             base_url=provider["base_url"],
             api_key=provider["api_key"],
@@ -679,7 +723,7 @@ async def _build_search_query(user_text: str, settings: dict) -> str:
         return user_text
 
 
-async def handle_confirm_stage(session: dict, settings: dict, websocket: WebSocket) -> str:
+async def handle_confirm_stage(session: dict, settings: dict, websocket: WebSocket, session_id: str = "") -> str:
     """处理前端确认按钮点击，直接执行当前阶段的确认动作"""
     stage = session.get("stage", 0)
     ui_lang = session.get("ui_lang", "zh")
@@ -710,13 +754,13 @@ async def handle_confirm_stage(session: dict, settings: dict, websocket: WebSock
         session["stage"] = 5
         await websocket.send_json({"type": "stage_change", "stage": 5})
         await websocket.send_json({"type": "generating_podcast"})
-        asyncio.create_task(_generate_podcast_task(session, settings, websocket))
+        asyncio.create_task(_generate_podcast_task(session, settings, websocket, session_id))
         return _s(ui_lang, "podcast_starting")
 
     return ""
 
 
-async def handle_stage(session: dict, user_text: str, settings: dict, websocket: WebSocket) -> str:
+async def handle_stage(session: dict, user_text: str, settings: dict, websocket: WebSocket, session_id: str = "") -> str:
     """根据当前阶段处理用户输入，返回 AI 回复"""
     stage = session["stage"]
     ui_lang = session.get("ui_lang", "zh")
@@ -757,9 +801,9 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
             except Exception:
                 pass
             firecrawl_key = settings.get("firecrawl_key", "")
-            search_query = await _build_search_query(user_text, settings)
+            search_query = await _build_search_query(user_text, settings, history=session["history"], ui_lang=ui_lang)
             session["search_query"] = search_query
-            results = await search(search_query, firecrawl_key)
+            results = await search(search_query, firecrawl_key, lang=ui_lang)
             results = _deduplicate(results)
             session["materials"] = results
             session["stage"] = 1
@@ -802,10 +846,10 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
             firecrawl_key = settings.get("firecrawl_key", "")
             search_query = session.get("search_query", "")
             if not search_query:
-                search_query = await _build_search_query(user_text, settings)
+                search_query = await _build_search_query(user_text, settings, history=session["history"], ui_lang=ui_lang)
             try:
                 # 多取一些结果，排除已有素材后补充
-                raw = await search(search_query, firecrawl_key, limit=15)
+                raw = await search(search_query, firecrawl_key, limit=15, lang=ui_lang)
                 new_results = _deduplicate(raw, existing=session["materials"])
                 if new_results:
                     session["materials"].extend(new_results)
@@ -935,7 +979,7 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
             await websocket.send_json({"type": "stage_change", "stage": 5})
             await websocket.send_json({"type": "generating_podcast"})
             # 后台异步生成，通过 WebSocket 推送逐段进度
-            asyncio.create_task(_generate_podcast_task(session, settings, websocket))
+            asyncio.create_task(_generate_podcast_task(session, settings, websocket, session_id))
             return _s(ui_lang, "podcast_starting")
 
         if not active_provider:
@@ -954,9 +998,18 @@ async def handle_stage(session: dict, user_text: str, settings: dict, websocket:
     return _s(ui_lang, "continue")
 
 
-async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSocket):
-    """后台异步生成播客，通过 WebSocket 发送逐段进度"""
+async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSocket, session_id: str = ""):
+    """后台异步生成播客，通过 WebSocket 发送逐段进度。
+    使用 _safe_send 封装所有 WebSocket 写入，确保 WS 断开后任务仍继续执行。"""
     podcast_id = str(uuid.uuid4())
+
+    async def _safe_send(data: dict) -> None:
+        """发送 WebSocket 消息，连接已关闭时静默忽略。"""
+        try:
+            await websocket.send_json(data)
+        except Exception:
+            pass
+
     try:
         import re as _re2
 
@@ -975,19 +1028,30 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
 
         segments = parse_script_segments(script, voice_assignments)
         if not segments:
-            await websocket.send_json({"type": "error", "message": "脚本解析失败，无法生成播客"})
+            await _safe_send({"type": "error", "message": "脚本解析失败，无法生成播客"})
             return
 
-        # 提前生成标题并注册到 generating registry，让历史页可见
-        title = await _generate_title(session["history"], settings)
         total = len(segments)
-        reg_register(podcast_id, title, total)
+        # 立即注册到 registry（占位标题），让历史页立刻可见；随后异步补充真实标题
+        _ui_lang = session.get("ui_lang", "zh")
+        reg_register(podcast_id, "Generating…" if _ui_lang == "en" else "生成中…", total)
+
+        # 后台获取真实标题（不阻塞 TTS 进度）
+        async def _fetch_and_update_title():
+            try:
+                real_title = await _generate_title(session["history"], settings, session.get("ui_lang", "zh"))
+                reg_update_title(podcast_id, real_title)
+                # 顺便保存到 session 供后面入库使用
+                session["_podcast_title"] = real_title
+            except Exception:
+                pass
+        asyncio.create_task(_fetch_and_update_title())
 
         api_key = settings.get("elevenlabs_key", "")
         audio_chunks = []
 
         for i, seg in enumerate(segments):
-            await websocket.send_json({
+            await _safe_send({
                 "type": "progress_podcast",
                 "current": i + 1,
                 "total": total,
@@ -998,7 +1062,7 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
                 chunk = await tts(seg["text"], seg["voice_id"], api_key)
                 audio_chunks.append(chunk)
             except Exception as e:
-                await websocket.send_json({"type": "error", "message": f"TTS 生成失败: {str(e)}"})
+                await _safe_send({"type": "error", "message": f"TTS 生成失败: {str(e)}"})
                 reg_unregister(podcast_id)
                 return
 
@@ -1036,6 +1100,15 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
         audio_path = STORAGE_DIR / audio_filename
         audio_path.write_bytes(combined_bytes)
 
+        # 等待 title（最多 8 秒），通常已经获取到了
+        for _ in range(16):
+            if "_podcast_title" in session:
+                break
+            await asyncio.sleep(0.5)
+        title = session.pop("_podcast_title", None) or (
+            reg_get_title(podcast_id) or ("Untitled Podcast" if _ui_lang == "en" else "未命名播客")
+        )
+
         params = session.get("params", {})
         podcast_data = {
             "id": podcast_id,
@@ -1050,9 +1123,17 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
             "created_at": datetime.now().isoformat(),
         }
         save_podcast(podcast_data)
+        # 播客生成成功：标记 session 已完成，防止 WS 关闭时误存为中断记录
+        session["ended_explicitly"] = True
+        # 若因连接断开已生成了中断记录，此处删除
+        if session_id:
+            try:
+                delete_interrupted_session(session_id)
+            except Exception:
+                pass
         reg_unregister(podcast_id)
 
-        await websocket.send_json({
+        await _safe_send({
             "type": "podcast_done",
             "id": podcast_id,
             "audio_url": f"/storage/{audio_filename}",
@@ -1062,10 +1143,7 @@ async def _generate_podcast_task(session: dict, settings: dict, websocket: WebSo
 
     except Exception as e:
         reg_unregister(podcast_id)
-        try:
-            await websocket.send_json({"type": "error", "message": f"播客生成失败: {str(e)}"})
-        except Exception:
-            pass
+        await _safe_send({"type": "error", "message": f"播客生成失败: {str(e)}"})
 
 
 async def generate_follow_up(session: dict, attempt: int, settings: dict) -> str:

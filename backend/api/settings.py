@@ -84,18 +84,19 @@ def get_providers():
 
 @router.post("/api/settings/providers")
 async def add_provider(body: ProviderCreate):
-    from fastapi import HTTPException
     settings = get_settings()
     providers = settings.get("providers", [])
 
-    # 必须能获取到模型才允许添加
-    try:
-        models = await list_models(body.base_url, body.api_key)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"无法连接到该供应商或获取模型列表失败：{e}")
-
-    if not models:
-        raise HTTPException(status_code=422, detail="未获取到任何模型，请检查 API 地址和 Key 是否正确")
+    # 尝试获取模型列表；失败时允许添加，使用空列表
+    models_warning = None
+    if body.models:
+        models = body.models
+    else:
+        try:
+            models = await list_models(body.base_url, body.api_key)
+        except Exception as e:
+            models = []
+            models_warning = str(e)
 
     new_provider = {
         "id": str(uuid.uuid4()),
@@ -108,13 +109,17 @@ async def add_provider(body: ProviderCreate):
     providers.append(new_provider)
     save_settings({"providers": providers})
 
-    return {**new_provider, "api_key": mask_key(new_provider["api_key"])}
+    result = {**new_provider, "api_key": mask_key(new_provider["api_key"])}
+    if models_warning:
+        result["models_warning"] = models_warning
+    return result
 
 
 class ProviderUpdate(BaseModel):
     name: str
     base_url: str
     api_key: Optional[str] = None  # None 表示不更新 key
+    models: Optional[List[str]] = None  # 手动指定模型列表
 
 
 @router.put("/api/settings/providers/{provider_id}")
@@ -129,14 +134,16 @@ async def update_provider(provider_id: str, body: ProviderUpdate):
     # 使用新 key 或保留原 key
     api_key = body.api_key if body.api_key else provider["api_key"]
 
-    # 验证：必须能获取到模型
-    try:
-        models = await list_models(body.base_url, api_key)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"无法连接到该供应商或获取模型列表失败：{e}")
-
-    if not models:
-        raise HTTPException(status_code=422, detail="未获取到任何模型，请检查 API 地址和 Key 是否正确")
+    # 手动指定模型优先；否则尝试自动获取，失败时保留原有列表
+    models_warning = None
+    if body.models is not None:
+        models = body.models
+    else:
+        try:
+            models = await list_models(body.base_url, api_key)
+        except Exception as e:
+            models = provider.get("models", [])
+            models_warning = str(e)
 
     provider["name"] = body.name
     provider["base_url"] = body.base_url
@@ -144,7 +151,10 @@ async def update_provider(provider_id: str, body: ProviderUpdate):
     provider["models"] = models
 
     save_settings({"providers": providers})
-    return {**provider, "api_key": mask_key(provider["api_key"])}
+    result = {**provider, "api_key": mask_key(provider["api_key"])}
+    if models_warning:
+        result["models_warning"] = models_warning
+    return result
 
 
 @router.put("/api/settings/providers/{provider_id}/activate")

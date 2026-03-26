@@ -16,6 +16,16 @@ def update_progress(podcast_id: str, current: int) -> None:
         _registry[podcast_id]["current"] = current
 
 
+def update_title(podcast_id: str, title: str) -> None:
+    if podcast_id in _registry:
+        _registry[podcast_id]["title"] = title
+
+
+def get_title(podcast_id: str) -> str | None:
+    entry = _registry.get(podcast_id)
+    return entry["title"] if entry else None
+
+
 def unregister(podcast_id: str) -> None:
     _registry.pop(podcast_id, None)
 

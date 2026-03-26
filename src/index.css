@@ -120,10 +120,17 @@
   50% { opacity: 1; }
 }
 
-@keyframes waveform {
-  0%, 100% { height: 8px; }
-  50% { height: 100%; }
+@keyframes waveform-bar {
+  0% { transform: scaleY(0.15); }
+  100% { transform: scaleY(1); }
 }
+
+.animate-waveform-bar {
+  animation: waveform-bar 0.5s ease-in-out infinite alternate;
+  transform-origin: bottom center;
+}
+
+
 
 @keyframes indeterminate {
   0% { width: 0%; margin-left: 0%; }

@@ -9,6 +9,7 @@ import {
   updateProvider,
   activateProvider,
   deleteProvider,
+  fetchProviderModels,
   fetchVoices,
   type Provider,
   type Voice,
@@ -85,11 +86,12 @@ export default function SettingsPage() {
   const [voicesError, setVoicesError] = useState("");
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newProvider, setNewProvider] = useState({ name: "", base_url: "", api_key: "" });
+  const [newProvider, setNewProvider] = useState({ name: "", base_url: "", api_key: "", models: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
-  const [editForm, setEditForm] = useState({ name: "", base_url: "", api_key: "" });
+  const [refreshingModels, setRefreshingModels] = useState<Set<string>>(new Set());
+  const [editForm, setEditForm] = useState({ name: "", base_url: "", api_key: "", models: "" });
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [providerSaving, setProviderSaving] = useState(false);
@@ -184,21 +186,29 @@ export default function SettingsPage() {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [elevenLabsKey, firecrawlKey]);
 
+  const parseModels = (s: string): string[] | undefined => {
+    const arr = s.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
+    return arr.length > 0 ? arr : undefined;
+  };
+
   const addProviderHandler = async () => {
     if (!newProvider.name || !newProvider.base_url) return;
     setProviderSaving(true);
     setProviderMsg(t.settings.verifying);
     try {
-      const saved = await saveProvider(newProvider);
+      const saved = await saveProvider({
+        ...newProvider,
+        models: parseModels(newProvider.models),
+      });
       setProviders(prev => [...prev, saved]);
       setExpandedId(saved.id);
-      setNewProvider({ name: "", base_url: "", api_key: "" });
+      setNewProvider({ name: "", base_url: "", api_key: "", models: "" });
       setShowAddForm(false);
       setProviderMsg("");
     } catch (e: unknown) {
       let msg = t.settings.verifyFailed;
       if (e instanceof Error) {
-        if (e.name === "AbortError") { msg = `✗ 连接超时，请检查供应商地址是否可访问`; }
+        if (e.name === "AbortError") { msg = t.settings.errTimeout; }
         else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
       }
       setProviderMsg(msg);
@@ -259,7 +269,7 @@ export default function SettingsPage() {
 
   const startEditHandler = (provider: Provider) => {
     setEditingId(provider.id);
-    setEditForm({ name: provider.name, base_url: provider.base_url, api_key: "" });
+    setEditForm({ name: provider.name, base_url: provider.base_url, api_key: "", models: provider.models.join(", ") });
     setProviderMsg("");
   };
 
@@ -271,6 +281,7 @@ export default function SettingsPage() {
         name: editForm.name,
         base_url: editForm.base_url,
         api_key: editForm.api_key || undefined,
+        models: parseModels(editForm.models),
       });
       setProviders(prev => prev.map(p => p.id === id ? updated : p));
       setEditingId(null);
@@ -279,7 +290,7 @@ export default function SettingsPage() {
     } catch (e: unknown) {
       let msg = t.settings.verifyFailed;
       if (e instanceof Error) {
-        if (e.name === "AbortError") { msg = `✗ 连接超时，请检查供应商地址是否可访问`; }
+        if (e.name === "AbortError") { msg = t.settings.errTimeout; }
         else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
       }
       setProviderMsg(msg);
@@ -293,6 +304,19 @@ export default function SettingsPage() {
     setProviders(prev => prev.filter(p => p.id !== id));
     if (expandedId === id) setExpandedId(null);
     if (editingId === id) setEditingId(null);
+  };
+
+  const refreshProviderModels = async (id: string) => {
+    setRefreshingModels(prev => new Set(prev).add(id));
+    try {
+      const models = await fetchProviderModels(id);
+      if (Array.isArray(models)) {
+        setProviders(prev => prev.map(p => p.id === id ? { ...p, models } : p));
+      }
+    } catch {}
+    finally {
+      setRefreshingModels(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
   };
 
   const activateProviderHandler = async (id: string) => {
@@ -421,6 +445,16 @@ export default function SettingsPage() {
                         type="password"
                         mono
                       />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1.5">{t.settings.modelsHint}</p>
+                        <textarea
+                          value={editForm.models}
+                          onChange={e => setEditForm(f => ({ ...f, models: e.target.value }))}
+                          placeholder={"gpt-4o, gpt-4o-mini\nclaude-3-5-sonnet"}
+                          rows={2}
+                          className="w-full bg-background border border-border rounded-md px-4 py-3 text-sm font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all resize-none"
+                        />
+                      </div>
                       <div className="space-y-2">
                         {providerMsg && (
                           <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
@@ -459,24 +493,40 @@ export default function SettingsPage() {
                       <div className="flex items-start gap-3">
                         <span className="font-mono text-xs text-muted-foreground min-w-[72px] mt-0.5">{t.settings.models}</span>
                         <div className="flex-1 min-w-0">
-                          <div className={`flex flex-wrap gap-2 overflow-hidden transition-all ${expandedModels.has(provider.id) ? "" : "max-h-[28px]"}`}>
-                            {provider.models.map(m => (
-                              <span key={m} className="font-mono text-xs bg-surface-alt px-3 py-1 rounded text-muted-foreground whitespace-nowrap">
-                                {m}
-                              </span>
-                            ))}
-                          </div>
-                          {provider.models.length > 0 && (
-                            <button
-                              onClick={() => setExpandedModels(prev => {
-                                const next = new Set(prev);
-                                next.has(provider.id) ? next.delete(provider.id) : next.add(provider.id);
-                                return next;
-                              })}
-                              className="mt-1.5 font-mono text-[10px] text-muted-foreground/60 hover:text-primary transition-colors"
-                            >
-                              {expandedModels.has(provider.id) ? "▲ 收起" : "▼ 展开全部"}
-                            </button>
+                          {provider.models.length === 0 ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground/60">{t.settings.modelsFetchFailed}</span>
+                              <button
+                                onClick={() => refreshProviderModels(provider.id)}
+                                disabled={refreshingModels.has(provider.id)}
+                                className="flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
+                              >
+                                {refreshingModels.has(provider.id)
+                                  ? <Loader2 size={11} className="animate-spin" />
+                                  : <RefreshCw size={11} />}
+                                {t.settings.refresh}
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className={`flex flex-wrap gap-2 overflow-hidden transition-all ${expandedModels.has(provider.id) ? "" : "max-h-[28px]"}`}>
+                                {provider.models.map(m => (
+                                  <span key={m} className="font-mono text-xs bg-surface-alt px-3 py-1 rounded text-muted-foreground whitespace-nowrap">
+                                    {m}
+                                  </span>
+                                ))}
+                              </div>
+                              <button
+                                onClick={() => setExpandedModels(prev => {
+                                  const next = new Set(prev);
+                                  next.has(provider.id) ? next.delete(provider.id) : next.add(provider.id);
+                                  return next;
+                                })}
+                                className="mt-1.5 font-mono text-[10px] text-muted-foreground/60 hover:text-primary transition-colors"
+                              >
+                                {expandedModels.has(provider.id) ? t.settings.modelsCollapse : t.settings.modelsExpand}
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -508,6 +558,16 @@ export default function SettingsPage() {
                 type="password"
                 mono
               />
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">{t.settings.modelsHintOptional}</p>
+                <textarea
+                  value={newProvider.models}
+                  onChange={e => setNewProvider(p => ({ ...p, models: e.target.value }))}
+                  placeholder={"gpt-4o, gpt-4o-mini\nclaude-3-5-sonnet"}
+                  rows={2}
+                  className="w-full bg-background border border-border rounded-md px-4 py-3 text-sm font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all resize-none"
+                />
+              </div>
               <div className="space-y-2">
                 {providerMsg && (
                   <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
@@ -622,7 +682,7 @@ export default function SettingsPage() {
                         <p className="px-3 py-2 text-xs text-muted-foreground/60">{t.settings.contentModelPlaceholder}</p>
                       );
                       if (models.length === 0) return (
-                        <p className="px-3 py-2 text-xs text-muted-foreground/60">无匹配模型</p>
+                        <p className="px-3 py-2 text-xs text-muted-foreground/60">{t.settings.noMatchModels}</p>
                       );
                       return models.map(m => (
                         <button
@@ -685,7 +745,7 @@ export default function SettingsPage() {
             <InputField
               value={elevenLabsKey}
               onChange={setElevenLabsKey}
-              placeholder={elevenLabsKeySet ? "已设置，重新输入以更改" : "ElevenLabs API Key"}
+              placeholder={elevenLabsKeySet ? t.settings.keyAlreadySet : "ElevenLabs API Key"}
               type="password"
               mono
             />
@@ -734,7 +794,7 @@ export default function SettingsPage() {
             {/* STT 模型选择 */}
             <div className="mt-4">
               <div className="mb-2">
-                <span className="text-xs text-muted-foreground">识别模型</span>
+                <span className="text-xs text-muted-foreground">{t.settings.sttModel}</span>
               </div>
               <div className="flex gap-2">
                 {(["scribe_v1", "scribe_v2"] as const).map(m => (
@@ -771,7 +831,7 @@ export default function SettingsPage() {
             <InputField
               value={firecrawlKey}
               onChange={setFirecrawlKey}
-              placeholder={firecrawlKeySet ? "已设置，重新输入以更改" : "Firecrawl API Key"}
+              placeholder={firecrawlKeySet ? t.settings.keyAlreadySet : "Firecrawl API Key"}
               type="password"
               mono
             />

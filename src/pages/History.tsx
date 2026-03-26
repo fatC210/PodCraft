@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Trash2, Clock, Headphones, Archive, Loader2, PhoneCall, Play, ChevronRight } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -32,7 +32,6 @@ export default function History() {
   const [records, setRecords] = useState<PodcastHistoryItem[]>([]);
   const [interrupted, setInterrupted] = useState<InterruptedSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = (initial = false) => {
     Promise.all([
@@ -46,20 +45,12 @@ export default function History() {
 
   useEffect(() => {
     loadData(true);
+    // 始终每 4 秒轮询一次，确保生成中的播客能及时出现和更新
+    const poll = setInterval(() => loadData(false), 4000);
+    return () => clearInterval(poll);
   }, []);
 
-  // 有生成中的播客时每 3 秒轮询一次
-  useEffect(() => {
-    const hasGenerating = records.some(r => r.status === "generating");
-    if (hasGenerating) {
-      if (!pollRef.current) {
-        pollRef.current = setInterval(() => loadData(false), 3000);
-      }
-    } else {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    }
-    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [records]);
+  // 原有的"有生成中才轮询"逻辑移除，改为始终轮询
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -134,9 +125,6 @@ export default function History() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-medium truncate">{item.title}</h3>
-                      <span className="flex-shrink-0 font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/25">
-                        {t.history.interrupted}
-                      </span>
                     </div>
                     <div className="flex items-center gap-3 mt-1">
                       <span className="font-mono text-[11px] text-muted-foreground">{t.history.stageLabel}：{item.stage_name}</span>

@@ -79,14 +79,15 @@ function StatusOrb({ state }: { state: AIState }) {
 /** Waveform bars shown when AI is speaking */
 function WaveformBars() {
   return (
-    <div className="flex items-center gap-[2px] h-4">
+    <div className="flex items-end gap-[2px] h-4">
       {Array.from({ length: 5 }).map((_, i) => (
         <div
           key={i}
-          className="w-[2px] bg-primary rounded-full"
+          className="w-[2px] bg-primary rounded-full animate-waveform-bar"
           style={{
-            animation: `waveform ${0.4 + i * 0.1}s ease-in-out ${i * 60}ms infinite alternate`,
             height: "14px",
+            animationDuration: `${0.4 + i * 0.09}s`,
+            animationDelay: `${i * 55}ms`,
           }}
         />
       ))}
@@ -210,8 +211,8 @@ function LoadingIndicator({ label }: { label: string }) {
         {[0, 1, 2].map(i => (
           <div
             key={i}
-            className="w-1.5 h-1.5 rounded-full bg-primary/70"
-            style={{ animation: `bounce 1s ease-in-out ${i * 160}ms infinite` }}
+            className="w-1.5 h-1.5 rounded-full bg-primary/70 animate-bounce"
+            style={{ animationDelay: `${i * 160}ms` }}
           />
         ))}
       </div>
@@ -359,7 +360,6 @@ export default function VoiceStudio() {
   const [aiName, setAiName] = useState("AI");
   const [textInput, setTextInput] = useState("");
   const [podcastProgress, setPodcastProgress] = useState<{ current: number; total: number; role: string } | null>(null);
-  const [scriptGenerating, setScriptGenerating] = useState(false);
   const [showConfirmBtn, setShowConfirmBtn] = useState(false);
   // confirmBtnStage 与 showConfirmBtn 同步设置，避免因 currentStage 异步更新导致标签错误
   const [confirmBtnStage, setConfirmBtnStage] = useState<number | null>(null);
@@ -389,6 +389,10 @@ export default function VoiceStudio() {
   const isWaitingContentRef = useRef(false);
   const messagesRef = useRef<Message[]>([]);
   const aiStateRef = useRef<AIState>("connecting");
+  // 已经通过按钮或 stage_change 确认过的阶段，不再重复展示对应确认按钮
+  const confirmedStagesRef = useRef<Set<number>>(new Set());
+  // 同步跟踪 currentStage，供 onmessage 闭包读取最新值
+  const currentStageRef = useRef(0);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -397,6 +401,10 @@ export default function VoiceStudio() {
   useEffect(() => {
     aiStateRef.current = aiState;
   }, [aiState]);
+
+  useEffect(() => {
+    currentStageRef.current = currentStage;
+  }, [currentStage]);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -569,8 +577,10 @@ export default function VoiceStudio() {
         if (playQueueRef.current.length > 0) {
           playNextAudio();
         } else if (isWaitingContentRef.current) {
-          // 后台还在生成内容，保持 thinking 状态，不进入 listening
-          setAIState("thinking");
+          // 后台还在生成内容，保持当前状态（generating 或 thinking），不进入 listening
+          if (aiStateRef.current !== "generating") {
+            setAIState("thinking");
+          }
         } else {
           setAIState("listening");
           startFollowUpTimer();
@@ -593,6 +603,26 @@ export default function VoiceStudio() {
     playNextAudio();
   }, [playNextAudio]);
 
+  // 根据 AI 回复文本推断实际应展示哪个确认阶段（防止 backend stage 滞后）
+  const detectConfirmStage = useCallback((text: string, backendStage: number): number => {
+    // 脚本已确认，进入音色选择（stage 4）
+    if (/脚本已确认|现在为每个角色选择音色|script confirmed|choose voice/i.test(text)) {
+      return Math.max(4, backendStage);
+    }
+    // 脚本已生成，等待确认（stage 3）
+    if (/脚本已(为你)?自动生成|完整脚本已生成|已为你生成.*脚本|脚本已生成|说.{0,4}确认脚本|confirm.*script|script.*generat/i.test(text)) {
+      return Math.max(3, backendStage);
+    }
+    // 正在询问角色/参数（stage 2）—— 仅在 backendStage <= 2 时才升级
+    if (
+      backendStage <= 2 &&
+      /几个角色|角色.*名字|名字.*角色|请给这个角色起|设为单人|设为双人|请告诉我.*角色|输出语言.*角色|参数确认|角色名字/i.test(text)
+    ) {
+      return 2;
+    }
+    return backendStage;
+  }, []);
+
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
   const connectWebSocket = useCallback(() => {
@@ -602,6 +632,9 @@ export default function VoiceStudio() {
     if (resumeId) params.set("resume_id", resumeId);
     const ws = new WebSocket(`${base}?${params}`);
     wsRef.current = ws;
+    // 新连接时重置已确认阶段记录
+    confirmedStagesRef.current = new Set();
+    currentStageRef.current = 0;
 
     ws.onopen = () => {
       setAIState("listening");
@@ -616,6 +649,8 @@ export default function VoiceStudio() {
             break;
           case "session_restored": {
             streamingScriptTextRef.current = "";
+            confirmedStagesRef.current = new Set();
+            currentStageRef.current = 0;
             setCurrentStage(msg.stage);
 
             // 把 rich content 挂到历史中对应的那条 AI 消息下
@@ -696,11 +731,19 @@ export default function VoiceStudio() {
               }];
             });
             setCurrentStage(msg.stage);
-            setAIState("thinking");
-            // 可确认阶段（1-4）且当前无生成任务时，显示确认按钮
-            if (msg.stage >= 1 && msg.stage <= 4 && !isWaitingContentRef.current) {
+            // 播客正在后台生成时，不把 aiState 从 "generating" 改回 "thinking"
+            if (aiStateRef.current !== "generating") {
+              setAIState("thinking");
+            }
+            // 用 AI 文本推断阶段，且不允许低于已知的当前阶段（防止 backend stage 滞后）
+            const detectedStage = Math.max(
+              detectConfirmStage(msg.text, msg.stage),
+              currentStageRef.current,
+            );
+            // 可确认阶段（1-4）且当前无生成任务，且该阶段尚未被确认过
+            if (detectedStage >= 1 && detectedStage <= 4 && !isWaitingContentRef.current && !confirmedStagesRef.current.has(detectedStage)) {
               setShowConfirmBtn(true);
-              setConfirmBtnStage(msg.stage);
+              setConfirmBtnStage(detectedStage);
             } else {
               setShowConfirmBtn(false);
               setConfirmBtnStage(null);
@@ -718,9 +761,8 @@ export default function VoiceStudio() {
             setShowConfirmBtn(false);
             setConfirmBtnStage(null);
             if (msg.task !== "searching") {
-              // 生成脚本：先将进度条推进到"确认脚本"阶段，再显示生成进度
+              // 生成脚本：先将进度条推进到"确认脚本"阶段
               setCurrentStage(prev => Math.max(prev, 3));
-              setScriptGenerating(true);
             }
             setMessages(prev => {
               const last = prev[prev.length - 1];
@@ -781,7 +823,6 @@ export default function VoiceStudio() {
             // 流式完成：将 script_streaming 卡片原地转为最终 script
             isWaitingContentRef.current = false;
             streamingScriptTextRef.current = "";
-            setScriptGenerating(false);
             setMessages(prev => {
               for (let i = prev.length - 1; i >= 0; i--) {
                 const rc = prev[i].richContent;
@@ -799,6 +840,13 @@ export default function VoiceStudio() {
           }
           case "stage_change":
             setCurrentStage(msg.stage);
+            // stage N 开始 → 前一阶段 N-1 已确认，加入集合防止按钮重复出现
+            if (msg.stage > 0) {
+              confirmedStagesRef.current.add(msg.stage - 1);
+            }
+            // 隐藏当前可能显示的确认按钮（阶段已推进）
+            setShowConfirmBtn(false);
+            setConfirmBtnStage(null);
             // Voice selection stage: pre-fetch voices to attach as rich content
             if (msg.stage === 4) {
               fetchVoices()
@@ -842,7 +890,7 @@ export default function VoiceStudio() {
     ws.onclose = () => {
       setAIState("connecting");
     };
-  }, [addMessage, enqueueAudio, scrollToBottom, resumeId, locale]);
+  }, [addMessage, enqueueAudio, scrollToBottom, resumeId, locale, detectConfirmStage]);
 
   // ── Microphone & VAD ──────────────────────────────────────────────────────
 
@@ -1047,11 +1095,15 @@ export default function VoiceStudio() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     interruptAI();
     if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+    // 记录已确认的阶段，避免后续消息重复展示同一按钮
+    if (confirmBtnStage !== null) {
+      confirmedStagesRef.current.add(confirmBtnStage);
+    }
     setShowConfirmBtn(false);
     setConfirmBtnStage(null);
     setAIState("thinking");
     ws.send(JSON.stringify({ type: "confirm_stage" }));
-  }, [interruptAI]);
+  }, [interruptAI, confirmBtnStage]);
 
   const stateLabel =
     isPaused ? t.studio.paused :
@@ -1084,18 +1136,26 @@ export default function VoiceStudio() {
             <div key={stage.id} className="flex items-center">
               <div
                 className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-all duration-300 ${
-                  i <= currentStage ? "text-primary bg-primary/10" : "text-muted-foreground/50"
+                  i < currentStage
+                    ? "text-green-500 bg-green-500/10"
+                    : i === currentStage
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground/50"
                 }`}
               >
                 <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    i < currentStage ? "bg-primary" : i === currentStage ? "bg-primary animate-pulse-amber" : "bg-border"
+                  className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${
+                    i < currentStage
+                      ? "bg-green-500"
+                      : i === currentStage
+                      ? "bg-primary animate-pulse-amber"
+                      : "bg-border"
                   }`}
                 />
                 {stage.label}
               </div>
               {i < stages.length - 1 && (
-                <div className={`w-3 h-px mx-0.5 ${i < currentStage ? "bg-primary/40" : "bg-border/50"}`} />
+                <div className={`w-3 h-px mx-0.5 ${i < currentStage ? "bg-green-500/40" : "bg-border/50"}`} />
               )}
             </div>
           ))}
@@ -1168,30 +1228,6 @@ export default function VoiceStudio() {
             <Send size={14} />
           </button>
         </div>
-
-        {/* Script generation progress bar */}
-        {scriptGenerating && (
-          <div className="mb-3 space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
-              <span>{t.studio.generatingScript}</span>
-              <div className="flex gap-0.5">
-                {[0, 1, 2].map(i => (
-                  <div
-                    key={i}
-                    className="w-1 h-1 rounded-full bg-primary/60"
-                    style={{ animation: `bounce 1s ease-in-out ${i * 160}ms infinite` }}
-                  />
-                ))}
-              </div>
-            </div>
-            <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full rounded-full bg-primary/70"
-                style={{ animation: "indeterminate 1.6s ease-in-out infinite" }}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Podcast generation progress bar */}
         {aiState === "generating" && podcastProgress && (

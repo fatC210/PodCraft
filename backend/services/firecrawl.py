@@ -4,7 +4,7 @@ import httpx
 FIRECRAWL_BASE = "https://api.firecrawl.dev"
 
 
-async def search(query: str, api_key: str, limit: int = 5) -> list:
+async def search(query: str, api_key: str, limit: int = 5, lang: str = "zh") -> list:
     """搜索相关内容，返回素材列表"""
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
@@ -16,6 +16,7 @@ async def search(query: str, api_key: str, limit: int = 5) -> list:
             json={
                 "query": query,
                 "limit": limit,
+                "lang": lang,
                 "scrapeOptions": {"formats": ["markdown"]},
             },
         )

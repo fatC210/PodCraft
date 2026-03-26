@@ -18,8 +18,16 @@ async def chat(messages: list, base_url: str, api_key: str, model: str) -> str:
                 "messages": messages,
             },
         )
-        response.raise_for_status()
-        data = response.json()
+        if not response.is_success:
+            body = response.text[:300].strip()
+            raise ValueError(f"LLM API {response.status_code}: {body or '(empty)'}")
+        try:
+            data = response.json()
+        except Exception:
+            snippet = response.text[:200].strip()
+            if snippet.lower().startswith(("<!doctype", "<html")):
+                raise ValueError("LLM API 返回了 HTML 页面（非 JSON），请检查供应商地址、API Key 或网络连通性")
+            raise ValueError(f"LLM 返回了非 JSON 响应: {snippet or '(empty)'}")
         return data["choices"][0]["message"]["content"]
 
 

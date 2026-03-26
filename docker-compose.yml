@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    volumes:
+      - backend_storage:/app/storage
+      - backend_db:/app/podcraft.db
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"   # 可选：本地直接访问后端调试用
+
+  frontend:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend_storage:
+  backend_db:

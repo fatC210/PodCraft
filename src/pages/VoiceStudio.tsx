@@ -627,7 +627,7 @@ export default function VoiceStudio() {
 
   const connectWebSocket = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const base = `${protocol}://localhost:8000/api/voice/stream`;
+    const base = `${protocol}://${window.location.host}/api/voice/stream`;
     const params = new URLSearchParams({ ui_lang: locale });
     if (resumeId) params.set("resume_id", resumeId);
     const ws = new WebSocket(`${base}?${params}`);

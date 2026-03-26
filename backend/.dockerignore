@@ -4,3 +4,5 @@ __pycache__
 .env*
 podcraft.db
 storage/
+settings.json
+.fernet_key

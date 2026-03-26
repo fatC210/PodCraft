@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Backend secrets
+backend/settings.json
+backend/.fernet_key
+backend/podcraft.db
+backend/storage/

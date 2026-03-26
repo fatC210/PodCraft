@@ -23,6 +23,7 @@ export type ServiceSettings = {
   elevenlabs_key: string;
   firecrawl_key: string;
   assistant_voice_id?: string;
+  assistant_voice_name?: string;
   content_model?: string;
   content_provider_id?: string;
   stt_model?: string;

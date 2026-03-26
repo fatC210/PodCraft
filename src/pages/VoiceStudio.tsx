@@ -435,7 +435,9 @@ export default function VoiceStudio() {
   useEffect(() => {
     fetchSettings()
       .then(s => {
-        if (s.assistant_voice_id) {
+        if (s.assistant_voice_name) {
+          setAiName(s.assistant_voice_name);
+        } else if (s.assistant_voice_id) {
           fetchVoices()
             .then(voices => {
               const v = voices.find(v => v.id === s.assistant_voice_id);

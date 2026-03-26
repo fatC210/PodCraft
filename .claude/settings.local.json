@@ -17,7 +17,11 @@
       "Bash(node_modules/.bin/vite build:*)",
       "Bash(git checkout:*)",
       "Bash(git remote:*)",
-      "Bash(railway:*)"
+      "Bash(railway:*)",
+      "Bash(ls C:/Users/11274/voice-pod-creator/README*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

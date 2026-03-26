@@ -12,6 +12,7 @@ class ServicesUpdate(BaseModel):
     elevenlabs_key: Optional[str] = None
     firecrawl_key: Optional[str] = None
     assistant_voice_id: Optional[str] = None
+    assistant_voice_name: Optional[str] = None
     content_model: Optional[str] = None
     content_provider_id: Optional[str] = None
     stt_model: Optional[str] = None
@@ -31,6 +32,7 @@ def get_settings_api():
         "elevenlabs_key": mask_key(settings.get("elevenlabs_key", "")),
         "firecrawl_key": mask_key(settings.get("firecrawl_key", "")),
         "assistant_voice_id": settings.get("assistant_voice_id", ""),
+        "assistant_voice_name": settings.get("assistant_voice_name", ""),
         "content_model": settings.get("content_model", ""),
         "content_provider_id": settings.get("content_provider_id", ""),
         "stt_model": settings.get("stt_model", "scribe_v1"),
@@ -62,6 +64,8 @@ async def update_services(body: ServicesUpdate):
         data["firecrawl_key"] = body.firecrawl_key
     if body.assistant_voice_id is not None:
         data["assistant_voice_id"] = body.assistant_voice_id
+    if body.assistant_voice_name is not None:
+        data["assistant_voice_name"] = body.assistant_voice_name
     if body.content_model is not None:
         data["content_model"] = body.content_model
     if body.content_provider_id is not None:

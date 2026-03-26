@@ -55,8 +55,9 @@ def get_settings() -> dict:
     else:
         result["firecrawl_key"] = ""
 
-    # assistant_voice_id / content_model / content_provider_id / stt_model（明文存储）
+    # assistant_voice_id / assistant_voice_name / content_model / content_provider_id / stt_model（明文存储）
     result["assistant_voice_id"] = raw.get("assistant_voice_id", "")
+    result["assistant_voice_name"] = raw.get("assistant_voice_name", "")
     result["content_model"] = raw.get("content_model", "")
     result["content_provider_id"] = raw.get("content_provider_id", "")
     result["stt_model"] = raw.get("stt_model", "scribe_v1")
@@ -94,6 +95,9 @@ def save_settings(data: dict):
 
     if "assistant_voice_id" in data:
         to_save["assistant_voice_id"] = data["assistant_voice_id"]
+
+    if "assistant_voice_name" in data:
+        to_save["assistant_voice_name"] = data["assistant_voice_name"]
 
     if "content_model" in data:
         to_save["content_model"] = data["content_model"]

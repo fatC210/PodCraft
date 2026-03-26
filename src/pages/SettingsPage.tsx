@@ -117,13 +117,14 @@ export default function SettingsPage() {
       .finally(() => { setLoading(false); initializedRef.current = true; });
   }, []);
 
-  const doSave = async (voiceId?: string) => {
+  const doSave = async (voiceId?: string, voiceName?: string) => {
     setSaving(true);
     try {
       const result = await saveServiceSettings({
         elevenlabs_key: elevenLabsKey,
         firecrawl_key: firecrawlKey,
         assistant_voice_id: voiceId ?? assistantVoiceId,
+        assistant_voice_name: voiceName,
       });
       // key 总是已保存（后端不再因验证失败而丢弃 key）
       if (elevenLabsKey) setElevenLabsKeySet(true);
@@ -767,7 +768,7 @@ export default function SettingsPage() {
                   <select
                     className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
                     value={assistantVoiceId || voices[0]?.id || ""}
-                    onChange={(e) => { stopPreview(); setAssistantVoiceId(e.target.value); doSave(e.target.value); }}
+                    onChange={(e) => { stopPreview(); setAssistantVoiceId(e.target.value); const v = voices.find(vv => vv.id === e.target.value); doSave(e.target.value, v ? v.name.split(" - ")[0].trim() : undefined); }}
                   >
                     {voices.map((v) => (
                       <option key={v.id} value={v.id}>

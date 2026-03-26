@@ -12,7 +12,8 @@ RUN bun run build
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-# 放入 templates 目录，nginx 启动时自动 envsubst 替换环境变量
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY nginx.conf /etc/nginx/nginx.conf.template
 
 EXPOSE 80
+
+CMD ["/bin/sh", "-c", "envsubst '${BACKEND_HOST}' < /etc/nginx/nginx.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

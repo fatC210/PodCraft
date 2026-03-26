@@ -16,6 +16,7 @@
       "Bash(npx vue-tsc:*)",
       "Bash(node_modules/.bin/vite build:*)",
       "Bash(git checkout:*)",
+      "Bash(git remote:*)",
       "Bash(railway:*)"
     ]
   }

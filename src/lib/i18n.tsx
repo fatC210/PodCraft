@@ -317,15 +317,15 @@ type I18nContextType = {
 };
 
 const I18nContext = createContext<I18nContextType>({
-  locale: "zh",
+  locale: "en",
   setLocale: () => {},
-  t: zh,
+  t: en,
 });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem("podcraft-locale");
-    return (saved === "en" ? "en" : "zh") as Locale;
+    return (saved === "zh" ? "zh" : "en") as Locale;
   });
 
   const setLocale = useCallback((l: Locale) => {

@@ -16,9 +16,7 @@ export default function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 h-screen w-16 bg-card border-r border-border flex flex-col items-center py-6 z-50">
       <Link to="/" className="mb-8">
-        <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-          <span className="text-primary-foreground font-bold text-sm">P</span>
-        </div>
+        <img src="/logo.svg" alt="PodCraft" className="w-10 h-10" />
       </Link>
 
       <nav className="flex flex-col gap-2 flex-1">

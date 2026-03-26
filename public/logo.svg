@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a1a24"/>
+      <stop offset="100%" stop-color="#0d0d12"/>
+    </radialGradient>
+    <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFB700" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#FFB700" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景圆 -->
+  <circle cx="100" cy="100" r="96" fill="url(#bgGrad)"/>
+  <circle cx="100" cy="100" r="96" fill="none" stroke="#FFB700" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- 内发光晕 -->
+  <circle cx="100" cy="100" r="60" fill="url(#glowGrad)"/>
+
+  <!-- 麦克风主体（圆角矩形）-->
+  <rect x="79" y="43" width="42" height="68" rx="21" fill="none" stroke="#FFB700" stroke-width="3" filter="url(#glow)"/>
+
+  <!-- 麦克风内部 AI 神经网络节点 -->
+  <circle cx="100" cy="61" r="3.5" fill="#FFB700" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="88"  cy="77" r="2.5" fill="#FFB700" opacity="0.65"/>
+  <circle cx="112" cy="77" r="2.5" fill="#FFB700" opacity="0.65"/>
+  <circle cx="94"  cy="93" r="2.5" fill="#FFB700" opacity="0.65"/>
+  <circle cx="106" cy="93" r="2.5" fill="#FFB700" opacity="0.65"/>
+  <circle cx="100" cy="101" r="3"  fill="#FFB700" opacity="0.85" filter="url(#glow)"/>
+
+  <!-- 神经连接线 -->
+  <line x1="100" y1="61"  x2="88"  y2="77"  stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+  <line x1="100" y1="61"  x2="112" y2="77"  stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+  <line x1="88"  y1="77"  x2="94"  y2="93"  stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+  <line x1="112" y1="77"  x2="106" y2="93"  stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+  <line x1="88"  y1="77"  x2="106" y2="93"  stroke="#FFB700" stroke-width="1"   opacity="0.2"/>
+  <line x1="112" y1="77"  x2="94"  y2="93"  stroke="#FFB700" stroke-width="1"   opacity="0.2"/>
+  <line x1="94"  y1="93"  x2="100" y2="101" stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+  <line x1="106" y1="93"  x2="100" y2="101" stroke="#FFB700" stroke-width="1.2" opacity="0.35"/>
+
+  <!-- 麦克风支架弧 -->
+  <path d="M68 105 Q68 137 100 137 Q132 137 132 105"
+        fill="none" stroke="#FFB700" stroke-width="3"
+        stroke-linecap="round" filter="url(#glow)"/>
+
+  <!-- 支架竖杆（直接连到底座中心）-->
+  <line x1="100" y1="137" x2="100" y2="167"
+        stroke="#FFB700" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- 底座圆盘上沿 -->
+  <ellipse cx="100" cy="167" rx="46" ry="10"
+           fill="none" stroke="#FFB700" stroke-width="3" filter="url(#glow)"/>
+
+  <!-- 底座厚度（下弧，增加立体感）-->
+  <path d="M54 167 Q54 181 100 181 Q146 181 146 167"
+        fill="none" stroke="#FFB700" stroke-width="2" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- 左侧声波（3层）-->
+  <path d="M57 93 Q47 105 57 117"
+        fill="none" stroke="#FFB700" stroke-width="2.8" stroke-linecap="round"
+        opacity="0.9" filter="url(#glow)"/>
+  <path d="M44 85 Q29 105 44 125"
+        fill="none" stroke="#FFB700" stroke-width="2" stroke-linecap="round"
+        opacity="0.55"/>
+  <path d="M33 78 Q14 105 33 132"
+        fill="none" stroke="#FFB700" stroke-width="1.5" stroke-linecap="round"
+        opacity="0.25"/>
+
+  <!-- 右侧声波（3层）-->
+  <path d="M143 93 Q153 105 143 117"
+        fill="none" stroke="#FFB700" stroke-width="2.8" stroke-linecap="round"
+        opacity="0.9" filter="url(#glow)"/>
+  <path d="M156 85 Q171 105 156 125"
+        fill="none" stroke="#FFB700" stroke-width="2" stroke-linecap="round"
+        opacity="0.55"/>
+  <path d="M167 78 Q186 105 167 132"
+        fill="none" stroke="#FFB700" stroke-width="1.5" stroke-linecap="round"
+        opacity="0.25"/>
+
+  <!-- 顶部 AI 星形 spark -->
+  <path d="M100 16 L102.5 23 L110 23 L104 27.5 L106.5 35 L100 30.5 L93.5 35 L96 27.5 L90 23 L97.5 23 Z"
+        fill="#FFB700" filter="url(#softGlow)"/>
+
+  <!-- 录制状态点（右上角）-->
+  <circle cx="148" cy="42" r="7" fill="#0d0d12"/>
+  <circle cx="148" cy="42" r="5" fill="#FFB700" filter="url(#softGlow)"/>
+  <circle cx="148" cy="42" r="5" fill="#FFB700" opacity="0.4">
+    <animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.4;0;0.4" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

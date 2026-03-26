@@ -125,17 +125,14 @@ export default function SettingsPage() {
         firecrawl_key: firecrawlKey,
         assistant_voice_id: voiceId ?? assistantVoiceId,
       });
-      if (result.elevenlabs_verified === false) {
-        setVoices([]);
-        setVoicesError("");
-        setSaveMsg(t.settings.verifyFailed);
-      } else {
-        if (result.elevenlabs_verified === true) {
-          setElevenLabsKeySet(true);
-          loadVoices();
-        }
-        if (firecrawlKey) setFirecrawlKeySet(true);
-        setSaveMsg(t.settings.savedOk);
+      // key 总是已保存（后端不再因验证失败而丢弃 key）
+      if (elevenLabsKey) setElevenLabsKeySet(true);
+      if (firecrawlKey) setFirecrawlKeySet(true);
+      setSaveMsg(t.settings.savedOk);
+      if (result.elevenlabs_verified === true) {
+        loadVoices();
+      } else if (result.elevenlabs_verified === false) {
+        setVoicesError(t.settings.verifyFailed);
       }
     } catch {
       setSaveMsg(t.settings.savedError);

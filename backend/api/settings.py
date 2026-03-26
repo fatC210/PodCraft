@@ -50,11 +50,11 @@ async def update_services(body: ServicesUpdate):
     elevenlabs_verified = None
     # 只在 key 非空且不含掩码字符时才更新
     if body.elevenlabs_key and "\u2022" not in body.elevenlabs_key:
-        # 验证 ElevenLabs key 有效性
+        # 先保存 key，再验证有效性（验证失败不阻止保存）
+        data["elevenlabs_key"] = body.elevenlabs_key
         try:
             from services.elevenlabs import list_voices
             await list_voices(body.elevenlabs_key)
-            data["elevenlabs_key"] = body.elevenlabs_key
             elevenlabs_verified = True
         except Exception:
             elevenlabs_verified = False

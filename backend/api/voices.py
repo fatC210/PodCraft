@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from config import get_settings
 from services.elevenlabs import list_voices, tts
@@ -14,9 +14,11 @@ async def get_voices():
     settings = get_settings()
     api_key = settings.get("elevenlabs_key", "")
     if not api_key:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="ElevenLabs API key not configured")
-    voices = await list_voices(api_key)
+    try:
+        voices = await list_voices(api_key)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"ElevenLabs unavailable: {e}")
     return voices
 
 
@@ -25,7 +27,6 @@ async def voice_preview(voice_id: str):
     settings = get_settings()
     api_key = settings.get("elevenlabs_key", "")
     if not api_key:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="ElevenLabs API key not configured")
 
     audio_bytes = await tts(PREVIEW_TEXT, voice_id, api_key)

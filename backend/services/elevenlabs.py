@@ -99,20 +99,34 @@ async def tts_stream(text: str, voice_id: str, api_key: str) -> bytes:
     return b"".join(chunks)
 
 
-async def list_voices(api_key: str) -> list:
-    """获取可用音色列表"""
-    response = await _client.get(
-        f"{ELEVENLABS_BASE}/v1/voices",
-        headers={"xi-api-key": api_key},
-    )
-    response.raise_for_status()
-    data = response.json()
-    voices = []
-    for v in data.get("voices", []):
-        voices.append({
-            "id": v.get("voice_id"),
-            "name": v.get("name"),
-            "preview_url": v.get("preview_url"),
-            "labels": v.get("labels", {}),
-        })
-    return voices
+async def list_voices(api_key: str, retries: int = 3) -> list:
+    """获取可用音色列表，失败时自动重试"""
+    last_exc: Exception = RuntimeError("unknown")
+    for attempt in range(retries):
+        try:
+            response = await _client.get(
+                f"{ELEVENLABS_BASE}/v1/voices",
+                headers={"xi-api-key": api_key},
+            )
+            response.raise_for_status()
+            data = response.json()
+            voices = []
+            for v in data.get("voices", []):
+                voices.append({
+                    "id": v.get("voice_id"),
+                    "name": v.get("name"),
+                    "preview_url": v.get("preview_url"),
+                    "labels": v.get("labels", {}),
+                })
+            return voices
+        except httpx.HTTPStatusError as e:
+            last_exc = e
+            if e.response.status_code in (429, 503) and attempt < retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+            else:
+                raise
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as e:
+            last_exc = e
+            if attempt < retries - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+    raise last_exc

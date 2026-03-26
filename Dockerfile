@@ -1,17 +1,18 @@
-# 构建阶段
-FROM node:20-alpine AS builder
+# 构建阶段（用 bun，与项目 lockfile 一致）
+FROM oven/bun:alpine AS builder
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN bun run build
 
 # 生产阶段
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# 放入 templates 目录，nginx 启动时自动 envsubst 替换环境变量
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 EXPOSE 80

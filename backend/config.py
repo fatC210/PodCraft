@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 from cryptography.fernet import Fernet
 
-SETTINGS_PATH = Path(__file__).parent / "settings.json"
-KEY_PATH = Path(__file__).parent / ".fernet_key"
+SETTINGS_PATH = Path(__file__).parent / "data" / "settings.json"
+KEY_PATH = Path(__file__).parent / "data" / ".fernet_key"
 
 
 def _get_fernet() -> Fernet:

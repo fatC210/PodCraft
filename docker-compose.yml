@@ -6,6 +6,7 @@ services:
     volumes:
       - backend_storage:/app/storage
       - backend_db:/app/podcraft.db
+      - backend_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     ports:
@@ -25,3 +26,4 @@ services:
 volumes:
   backend_storage:
   backend_db:
+  backend_data:

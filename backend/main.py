@@ -37,4 +37,4 @@ async def startup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.0-frontend-keys"}

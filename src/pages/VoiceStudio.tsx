@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause, Send, CheckCircle2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { fetchVoices, buildVoiceStreamUrl, type Voice } from "@/lib/api";
+import { addToHistory } from "@/lib/history-store";
 import { getSettings } from "@/lib/settings-store";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -864,6 +865,17 @@ export default function VoiceStudio() {
             setAIState("listening");
             isWaitingContentRef.current = false;
             setPodcastProgress(null);
+            addToHistory({
+              id: msg.id,
+              title: msg.title ?? (locale === "en" ? "Untitled Podcast" : "未命名播客"),
+              duration: msg.duration ?? null,
+              date: new Date().toISOString().slice(0, 10),
+              language: null,
+              materials: 0,
+              audio_url: msg.audio_url,
+              status: "completed",
+              created_at: new Date().toISOString(),
+            });
             break;
           case "no_speech":
             setAIState("listening");

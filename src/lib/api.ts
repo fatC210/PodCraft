@@ -5,6 +5,7 @@
  */
 
 import { getSettings, getActiveProvider } from "./settings-store";
+import { getStoredHistory, getStoredItem, removeFromHistory, migrateFromBackend } from "./history-store";
 
 const BASE = "/api";
 
@@ -153,16 +154,27 @@ export type PodcastHistoryItem = {
   total?: number;
 };
 
-export function fetchHistory(): Promise<PodcastHistoryItem[]> {
-  return request("/podcast/history");
+export async function fetchHistory(): Promise<PodcastHistoryItem[]> {
+  const local = getStoredHistory();
+  // 拉取后端的生成中条目（兼容迁移）
+  try {
+    const all = await request<PodcastHistoryItem[]>("/podcast/history");
+    migrateFromBackend(all);
+    const generating = all.filter(i => i.status === "generating");
+    return [...generating, ...getStoredHistory()];
+  } catch {
+    return local;
+  }
 }
 
-export function fetchPodcast(id: string): Promise<PodcastHistoryItem> {
-  return request(`/podcast/${id}`);
+export async function fetchPodcast(id: string): Promise<PodcastHistoryItem> {
+  return getStoredItem(id) ?? request(`/podcast/${id}`);
 }
 
-export function deleteHistoryItem(id: string): Promise<{ ok: boolean }> {
-  return request(`/podcast/${id}`, { method: "DELETE" });
+export async function deleteHistoryItem(id: string): Promise<{ ok: boolean }> {
+  removeFromHistory(id);
+  try { await request(`/podcast/${id}`, { method: "DELETE" }); } catch { /* 音频文件已不存在时忽略 */ }
+  return { ok: true };
 }
 
 // ── Interrupted sessions ───────────────────────────────────────────────────────

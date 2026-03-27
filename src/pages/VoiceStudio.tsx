@@ -1024,6 +1024,15 @@ export default function VoiceStudio() {
       stopStream();
       interruptCheckingRef.current = false;
       if (followUpTimerRef.current) { clearTimeout(followUpTimerRef.current); followUpTimerRef.current = null; }
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const hasUserReply = messagesRef.current.some(m => m.role === "user");
+        if (!hasUserReply) {
+          // 用户没有回复过，通知后端不保存中断会话
+          ws.send(JSON.stringify({ type: "end_call" }));
+        }
+        // 有用户回复：直接关闭，后端会自动保存为中断会话（在历史页可见）
+      }
       wsRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

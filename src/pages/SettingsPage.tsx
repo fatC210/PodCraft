@@ -12,6 +12,29 @@ import {
   type Provider,
 } from "@/lib/settings-store";
 
+// ── Voice list cache helpers ──────────────────────────────────────────────────
+const VOICES_CACHE_DATA_KEY = "podcraft_voices_data";
+const VOICES_CACHE_EL_KEY   = "podcraft_voices_el_key";
+
+function loadVoicesCache(elKey: string): Voice[] | null {
+  if (!elKey) return null;
+  try {
+    if (localStorage.getItem(VOICES_CACHE_EL_KEY) !== elKey) return null;
+    const raw = localStorage.getItem(VOICES_CACHE_DATA_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveVoicesCache(elKey: string, voices: Voice[]): void {
+  localStorage.setItem(VOICES_CACHE_EL_KEY, elKey);
+  localStorage.setItem(VOICES_CACHE_DATA_KEY, JSON.stringify(voices));
+}
+
+function clearVoicesCache(): void {
+  localStorage.removeItem(VOICES_CACHE_EL_KEY);
+  localStorage.removeItem(VOICES_CACHE_DATA_KEY);
+}
+
 function SectionTitle({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <h2 className={`text-base font-semibold tracking-tight text-foreground ${className}`}>
@@ -23,6 +46,7 @@ function SectionTitle({ children, className = "" }: { children: React.ReactNode;
 function InputField({
   value,
   onChange,
+  onBlur,
   placeholder,
   type = "text",
   mono = false,
@@ -30,6 +54,7 @@ function InputField({
 }: {
   value: string;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
   type?: string;
   mono?: boolean;
@@ -43,6 +68,7 @@ function InputField({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         type={isPassword && !show ? "password" : "text"}
         disabled={disabled}
@@ -73,9 +99,12 @@ export default function SettingsPage() {
   const [modelProvId, setModelProvId] = useState<string | null>(null);
   const modelDropRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
+  // committed = saved to localStorage; draft = current input value
   const [elevenLabsKey, setElevenLabsKey] = useState("");
-  const [sttModel, setSttModel] = useState("scribe_v1");
+  const [elevenLabsKeyDraft, setElevenLabsKeyDraft] = useState("");
   const [firecrawlKey, setFirecrawlKey] = useState("");
+  const [firecrawlKeyDraft, setFirecrawlKeyDraft] = useState("");
+  const [sttModel, setSttModel] = useState("scribe_v1");
   const [assistantVoiceId, setAssistantVoiceId] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -91,34 +120,34 @@ export default function SettingsPage() {
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerMsg, setProviderMsg] = useState("");
   const [loading, setLoading] = useState(true);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initializedRef = useRef(false);
 
   // 从 localStorage 加载初始状态
   useEffect(() => {
     const s = getSettings();
     setElevenLabsKey(s.elevenlabs_key);
+    setElevenLabsKeyDraft(s.elevenlabs_key);
     setFirecrawlKey(s.firecrawl_key);
+    setFirecrawlKeyDraft(s.firecrawl_key);
     setProviders(s.providers);
     setAssistantVoiceId(s.assistant_voice_id);
     setContentModel(s.content_model);
     setContentProviderId(s.content_provider_id);
     setSttModel(s.stt_model || "scribe_v1");
-    if (s.elevenlabs_key) loadVoices();
+    if (s.elevenlabs_key) {
+      const cached = loadVoicesCache(s.elevenlabs_key);
+      if (cached) {
+        setVoices(cached);
+        // 若已有 voice_id 但未保存 voice_name，自动补填
+        if (s.assistant_voice_id && !s.assistant_voice_name) {
+          const v = cached.find(vv => vv.id === s.assistant_voice_id);
+          if (v) saveSettings({ assistant_voice_name: v.name.split(" - ")[0].trim() });
+        }
+      } else {
+        loadVoices(s.elevenlabs_key);
+      }
+    }
     setLoading(false);
-    initializedRef.current = true;
   }, []);
-
-  // ── 保存 keys 到 localStorage（防抖）────────────────────────────────────
-  useEffect(() => {
-    if (!initializedRef.current) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      saveSettings({ elevenlabs_key: elevenLabsKey, firecrawl_key: firecrawlKey });
-      if (elevenLabsKey) loadVoices();
-    }, 800);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [elevenLabsKey, firecrawlKey]);
 
   // 点击 model 下拉外部时关闭
   useEffect(() => {
@@ -243,12 +272,14 @@ export default function SettingsPage() {
 
   // ── Voice ────────────────────────────────────────────────────────────────
 
-  const loadVoices = async () => {
+  const loadVoices = async (keyOverride?: string) => {
     setVoicesLoading(true);
     setVoicesError("");
     try {
       const list = await fetchVoices();
       setVoices(list);
+      const key = keyOverride ?? elevenLabsKey;
+      if (key) saveVoicesCache(key, list);
       // 若已有 voice_id 但未保存 voice_name，自动补填
       const s = getSettings();
       if (s.assistant_voice_id && !s.assistant_voice_name) {
@@ -260,6 +291,28 @@ export default function SettingsPage() {
     } finally {
       setVoicesLoading(false);
     }
+  };
+
+  // ElevenLabs key 失焦时保存（仅在有修改时）
+  const handleElevenLabsBlur = () => {
+    if (elevenLabsKeyDraft === elevenLabsKey) return;
+    setElevenLabsKey(elevenLabsKeyDraft);
+    saveSettings({ elevenlabs_key: elevenLabsKeyDraft });
+    if (!elevenLabsKeyDraft) {
+      setVoices([]);
+      clearVoicesCache();
+      setVoicesError("");
+    } else {
+      clearVoicesCache();
+      loadVoices(elevenLabsKeyDraft);
+    }
+  };
+
+  // Firecrawl key 失焦时保存（仅在有修改时）
+  const handleFirecrawlBlur = () => {
+    if (firecrawlKeyDraft === firecrawlKey) return;
+    setFirecrawlKey(firecrawlKeyDraft);
+    saveSettings({ firecrawl_key: firecrawlKeyDraft });
   };
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -731,8 +784,9 @@ export default function SettingsPage() {
               </a>
             </div>
             <InputField
-              value={elevenLabsKey}
-              onChange={setElevenLabsKey}
+              value={elevenLabsKeyDraft}
+              onChange={setElevenLabsKeyDraft}
+              onBlur={handleElevenLabsBlur}
               placeholder="ElevenLabs API Key"
               type="password"
               mono
@@ -743,7 +797,7 @@ export default function SettingsPage() {
                 <span className="text-xs text-muted-foreground">{t.settings.assistantVoice}</span>
                 <button
                   onClick={loadVoices}
-                  disabled={voicesLoading}
+                  disabled={voicesLoading || !elevenLabsKey}
                   title={voices.length > 0 ? t.settings.refreshVoices : t.settings.loadVoices}
                   className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                 >
@@ -824,8 +878,9 @@ export default function SettingsPage() {
               </a>
             </div>
             <InputField
-              value={firecrawlKey}
-              onChange={setFirecrawlKey}
+              value={firecrawlKeyDraft}
+              onChange={setFirecrawlKeyDraft}
+              onBlur={handleFirecrawlBlur}
               placeholder="Firecrawl API Key"
               type="password"
               mono

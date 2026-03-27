@@ -38,3 +38,8 @@ async def startup():
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "2.0-frontend-keys"}
+
+
+@app.get("/api/version")
+def api_version():
+    return {"version": "2.0-frontend-keys"}

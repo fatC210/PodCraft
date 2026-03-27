@@ -16,4 +16,4 @@ COPY nginx.conf /etc/nginx/nginx.conf.template
 
 EXPOSE 80
 
-CMD ["/bin/sh", "-c", "RESOLVER=$(grep nameserver /etc/resolv.conf | head -1 | awk '{print $2}'); sed \"s/__RESOLVER__/$RESOLVER/\" /etc/nginx/nginx.conf.template > /tmp/nginx.tpl; envsubst '${BACKEND_HOST} ${PORT}' < /tmp/nginx.tpl > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "RESOLVER=$(grep nameserver /etc/resolv.conf | head -1 | awk '{print $2}'); echo \"$RESOLVER\" | grep -q ':' && RESOLVER=\"[$RESOLVER]\"; sed \"s/__RESOLVER__/$RESOLVER/\" /etc/nginx/nginx.conf.template > /tmp/nginx.tpl; envsubst '${BACKEND_HOST} ${PORT}' < /tmp/nginx.tpl > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

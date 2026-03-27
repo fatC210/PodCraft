@@ -1,7 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from pydantic import BaseModel
 from typing import List, Optional
-from config import get_settings
 from services.llm import chat
 
 router = APIRouter()
@@ -17,15 +16,23 @@ class AIEditRequest(BaseModel):
     instruction: str
 
 
-@router.post("/api/script/generate")
-async def generate_script(body: GenerateScriptRequest):
-    settings = get_settings()
-    providers = settings.get("providers", [])
-    active_provider = next((p for p in providers if p.get("active")), providers[0] if providers else None)
-
-    if not active_provider:
+def _get_provider(base_url: str, api_key: str, model: str):
+    if not base_url or not api_key:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="No active AI provider configured")
+        raise HTTPException(status_code=400, detail="No AI provider configured")
+    return base_url, api_key, model or "gpt-4o"
+
+
+@router.post("/api/script/generate")
+async def generate_script(
+    body: GenerateScriptRequest,
+    x_provider_base_url: Optional[str] = Header(None),
+    x_provider_api_key: Optional[str] = Header(None),
+    x_provider_model: Optional[str] = Header(None),
+):
+    base_url, api_key, model = _get_provider(
+        x_provider_base_url or "", x_provider_api_key or "", x_provider_model or ""
+    )
 
     import json
 
@@ -40,22 +47,23 @@ async def generate_script(body: GenerateScriptRequest):
 
     script = await chat(
         [{"role": "user", "content": script_prompt}],
-        active_provider["base_url"],
-        active_provider["api_key"],
-        active_provider.get("models", ["gpt-4o"])[0],
+        base_url,
+        api_key,
+        model,
     )
     return {"script": script}
 
 
 @router.post("/api/script/ai-edit")
-async def ai_edit_script(body: AIEditRequest):
-    settings = get_settings()
-    providers = settings.get("providers", [])
-    active_provider = next((p for p in providers if p.get("active")), providers[0] if providers else None)
-
-    if not active_provider:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="No active AI provider configured")
+async def ai_edit_script(
+    body: AIEditRequest,
+    x_provider_base_url: Optional[str] = Header(None),
+    x_provider_api_key: Optional[str] = Header(None),
+    x_provider_model: Optional[str] = Header(None),
+):
+    base_url, api_key, model = _get_provider(
+        x_provider_base_url or "", x_provider_api_key or "", x_provider_model or ""
+    )
 
     edit_prompt = (
         f"请根据以下指令修改播客脚本。\n"
@@ -66,8 +74,8 @@ async def ai_edit_script(body: AIEditRequest):
 
     edited = await chat(
         [{"role": "user", "content": edit_prompt}],
-        active_provider["base_url"],
-        active_provider["api_key"],
-        active_provider.get("models", ["gpt-4o"])[0],
+        base_url,
+        api_key,
+        model,
     )
     return {"script": edited}

@@ -1,19 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Check, ExternalLink, ChevronDown, Eye, EyeOff, Loader2, Pencil, Zap, Play, Square, RefreshCw, Search } from "lucide-react";
 import { useI18n, Locale } from "@/lib/i18n";
+import { fetchVoices, fetchProviderModels, type Voice } from "@/lib/api";
 import {
-  fetchSettings,
-  saveServiceSettings,
-  fetchProviders,
-  saveProvider,
-  updateProvider,
-  activateProvider,
-  deleteProvider,
-  fetchProviderModels,
-  fetchVoices,
+  getSettings,
+  saveSettings,
+  addProvider,
+  updateProvider as updateProviderStore,
+  activateProvider as activateProviderStore,
+  deleteProvider as deleteProviderStore,
   type Provider,
-  type Voice,
-} from "@/lib/api";
+} from "@/lib/settings-store";
 
 function SectionTitle({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
@@ -67,6 +64,7 @@ function InputField({
 export default function SettingsPage() {
   const { t, locale, setLocale } = useI18n();
 
+  // ── 从 localStorage 初始化状态 ───────────────────────────────────────────
   const [providers, setProviders] = useState<Provider[]>([]);
   const [contentModel, setContentModel] = useState("");
   const [contentProviderId, setContentProviderId] = useState("");
@@ -76,10 +74,8 @@ export default function SettingsPage() {
   const modelDropRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
   const [elevenLabsKey, setElevenLabsKey] = useState("");
-  const [elevenLabsKeySet, setElevenLabsKeySet] = useState(false);
   const [sttModel, setSttModel] = useState("scribe_v1");
   const [firecrawlKey, setFirecrawlKey] = useState("");
-  const [firecrawlKeySet, setFirecrawlKeySet] = useState(false);
   const [assistantVoiceId, setAssistantVoiceId] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -92,68 +88,37 @@ export default function SettingsPage() {
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
   const [refreshingModels, setRefreshingModels] = useState<Set<string>>(new Set());
   const [editForm, setEditForm] = useState({ name: "", base_url: "", api_key: "", models: "" });
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerMsg, setProviderMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initializedRef = useRef(false);
 
-  // Load settings from backend on mount
+  // 从 localStorage 加载初始状态
   useEffect(() => {
-    Promise.all([fetchSettings(), fetchProviders()])
-      .then(([svc, provs]) => {
-        setElevenLabsKeySet(!!svc.elevenlabs_key);
-        setFirecrawlKeySet(!!svc.firecrawl_key);
-        setAssistantVoiceId(svc.assistant_voice_id ?? "");
-        setContentModel(svc.content_model ?? "");
-        setContentProviderId(svc.content_provider_id ?? "");
-        setSttModel(svc.stt_model ?? "scribe_v1");
-        setProviders(provs ?? []);
-        if (svc.elevenlabs_key) loadVoices();
-      })
-      .catch(() => {})
-      .finally(() => { setLoading(false); initializedRef.current = true; });
+    const s = getSettings();
+    setElevenLabsKey(s.elevenlabs_key);
+    setFirecrawlKey(s.firecrawl_key);
+    setProviders(s.providers);
+    setAssistantVoiceId(s.assistant_voice_id);
+    setContentModel(s.content_model);
+    setContentProviderId(s.content_provider_id);
+    setSttModel(s.stt_model || "scribe_v1");
+    if (s.elevenlabs_key) loadVoices();
+    setLoading(false);
+    initializedRef.current = true;
   }, []);
 
-  const doSave = async (voiceId?: string, voiceName?: string) => {
-    setSaving(true);
-    try {
-      const result = await saveServiceSettings({
-        elevenlabs_key: elevenLabsKey,
-        firecrawl_key: firecrawlKey,
-        assistant_voice_id: voiceId ?? assistantVoiceId,
-        assistant_voice_name: voiceName,
-      });
-      // key 总是已保存（后端不再因验证失败而丢弃 key）
-      if (elevenLabsKey) setElevenLabsKeySet(true);
-      if (firecrawlKey) setFirecrawlKeySet(true);
-      setSaveMsg(t.settings.savedOk);
-      if (result.elevenlabs_verified === true) {
-        loadVoices();
-      } else if (result.elevenlabs_verified === false) {
-        setVoicesError(t.settings.verifyFailed);
-      }
-    } catch {
-      setSaveMsg(t.settings.savedError);
-    } finally {
-      setSaving(false);
-      setTimeout(() => setSaveMsg(""), 2500);
-    }
-  };
-
-  const saveContentModel = async (model: string, providerId: string) => {
-    try {
-      await saveServiceSettings({ elevenlabs_key: "", firecrawl_key: "", content_model: model, content_provider_id: providerId });
-    } catch {}
-  };
-
-  const saveSttModel = async (model: string) => {
-    try {
-      await saveServiceSettings({ elevenlabs_key: "", firecrawl_key: "", stt_model: model });
-    } catch {}
-  };
+  // ── 保存 keys 到 localStorage（防抖）────────────────────────────────────
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      saveSettings({ elevenlabs_key: elevenLabsKey, firecrawl_key: firecrawlKey });
+      if (elevenLabsKey) loadVoices();
+    }, 800);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [elevenLabsKey, firecrawlKey]);
 
   // 点击 model 下拉外部时关闭
   useEffect(() => {
@@ -176,44 +141,107 @@ export default function SettingsPage() {
     });
   }, [modelOpen]);
 
-  // 自动保存：key 输入停止 800ms 后触发
-  useEffect(() => {    if (!initializedRef.current) return;
-    if (!elevenLabsKey && !firecrawlKey) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSave(), 800);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [elevenLabsKey, firecrawlKey]);
-
-  const parseModels = (s: string): string[] | undefined => {
-    const arr = s.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
-    return arr.length > 0 ? arr : undefined;
+  const parseModels = (s: string): string[] => {
+    return s.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
   };
+
+  // ── Provider CRUD ────────────────────────────────────────────────────────
 
   const addProviderHandler = async () => {
-    if (!newProvider.name || !newProvider.base_url) return;
+    if (!newProvider.name || !newProvider.base_url || !newProvider.api_key) return;
     setProviderSaving(true);
     setProviderMsg(t.settings.verifying);
-    try {
-      const saved = await saveProvider({
-        ...newProvider,
-        models: parseModels(newProvider.models),
-      });
-      setProviders(prev => [...prev, saved]);
-      setExpandedId(saved.id);
-      setNewProvider({ name: "", base_url: "", api_key: "", models: "" });
-      setShowAddForm(false);
-      setProviderMsg("");
-    } catch (e: unknown) {
-      let msg = t.settings.verifyFailed;
-      if (e instanceof Error) {
-        if (e.name === "AbortError") { msg = t.settings.errTimeout; }
-        else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
+    let models: string[] = parseModels(newProvider.models);
+    let modelsWarning = "";
+
+    if (models.length === 0) {
+      try {
+        const result = await fetchProviderModels(newProvider.base_url, newProvider.api_key);
+        models = result.models ?? [];
+        if (result.error) modelsWarning = result.error;
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") {
+          setProviderSaving(false);
+          setProviderMsg(t.settings.errTimeout);
+          return;
+        }
+        modelsWarning = e instanceof Error ? e.message : String(e);
       }
-      setProviderMsg(msg);
-    } finally {
-      setProviderSaving(false);
+    }
+
+    const saved = addProvider({ name: newProvider.name, base_url: newProvider.base_url, api_key: newProvider.api_key, models });
+    setProviders(getSettings().providers);
+    setExpandedId(saved.id);
+    setNewProvider({ name: "", base_url: "", api_key: "", models: "" });
+    setShowAddForm(false);
+    setProviderSaving(false);
+    setProviderMsg(modelsWarning ? `⚠ ${modelsWarning}` : "");
+  };
+
+  const saveEditHandler = async (id: string) => {
+    setProviderSaving(true);
+    setProviderMsg(t.settings.verifying);
+
+    const current = providers.find(p => p.id === id);
+    if (!current) { setProviderSaving(false); return; }
+
+    const api_key = editForm.api_key || current.api_key;
+    let models: string[] = parseModels(editForm.models);
+    let modelsWarning = "";
+
+    if (models.length === 0) {
+      try {
+        const result = await fetchProviderModels(editForm.base_url, api_key);
+        models = result.models ?? [];
+        if (result.error) modelsWarning = result.error;
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") {
+          setProviderSaving(false);
+          setProviderMsg(t.settings.errTimeout);
+          return;
+        }
+        models = current.models;
+        modelsWarning = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    updateProviderStore(id, { name: editForm.name, base_url: editForm.base_url, api_key, models });
+    setProviders(getSettings().providers);
+    setEditingId(null);
+    setProviderSaving(false);
+    setProviderMsg(modelsWarning ? `⚠ ${modelsWarning}` : t.settings.verifySuccess);
+    if (!modelsWarning) setTimeout(() => setProviderMsg(""), 3000);
+  };
+
+  const removeProviderHandler = (id: string) => {
+    deleteProviderStore(id);
+    setProviders(getSettings().providers);
+    if (expandedId === id) setExpandedId(null);
+    if (editingId === id) setEditingId(null);
+  };
+
+  const refreshProviderModels = async (id: string) => {
+    const provider = providers.find(p => p.id === id);
+    if (!provider) return;
+    setRefreshingModels(prev => new Set(prev).add(id));
+    try {
+      const result = await fetchProviderModels(provider.base_url, provider.api_key);
+      if (Array.isArray(result.models) && result.models.length > 0) {
+        updateProviderStore(id, { models: result.models });
+        setProviders(getSettings().providers);
+      }
+    } catch {}
+    finally {
+      setRefreshingModels(prev => { const next = new Set(prev); next.delete(id); return next; });
     }
   };
+
+  const activateProviderHandler = (id: string) => {
+    activateProviderStore(id);
+    setProviders(getSettings().providers);
+  };
+
+  // ── Voice ────────────────────────────────────────────────────────────────
 
   const loadVoices = async () => {
     setVoicesLoading(true);
@@ -269,57 +297,6 @@ export default function SettingsPage() {
     setEditingId(provider.id);
     setEditForm({ name: provider.name, base_url: provider.base_url, api_key: "", models: provider.models.join(", ") });
     setProviderMsg("");
-  };
-
-  const saveEditHandler = async (id: string) => {
-    setProviderSaving(true);
-    setProviderMsg(t.settings.verifying);
-    try {
-      const updated = await updateProvider(id, {
-        name: editForm.name,
-        base_url: editForm.base_url,
-        api_key: editForm.api_key || undefined,
-        models: parseModels(editForm.models),
-      });
-      setProviders(prev => prev.map(p => p.id === id ? updated : p));
-      setEditingId(null);
-      setProviderMsg(t.settings.verifySuccess);
-      setTimeout(() => setProviderMsg(""), 3000);
-    } catch (e: unknown) {
-      let msg = t.settings.verifyFailed;
-      if (e instanceof Error) {
-        if (e.name === "AbortError") { msg = t.settings.errTimeout; }
-        else { try { msg = `✗ ${JSON.parse(e.message).detail}`; } catch { msg = `✗ ${e.message}`; } }
-      }
-      setProviderMsg(msg);
-    } finally {
-      setProviderSaving(false);
-    }
-  };
-
-  const removeProviderHandler = async (id: string) => {
-    try { await deleteProvider(id); } catch {}
-    setProviders(prev => prev.filter(p => p.id !== id));
-    if (expandedId === id) setExpandedId(null);
-    if (editingId === id) setEditingId(null);
-  };
-
-  const refreshProviderModels = async (id: string) => {
-    setRefreshingModels(prev => new Set(prev).add(id));
-    try {
-      const models = await fetchProviderModels(id);
-      if (Array.isArray(models)) {
-        setProviders(prev => prev.map(p => p.id === id ? { ...p, models } : p));
-      }
-    } catch {}
-    finally {
-      setRefreshingModels(prev => { const next = new Set(prev); next.delete(id); return next; });
-    }
-  };
-
-  const activateProviderHandler = async (id: string) => {
-    try { await activateProvider(id); } catch {}
-    setProviders(prev => prev.map(p => ({ ...p, active: p.id === id })));
   };
 
   return (
@@ -389,8 +366,21 @@ export default function SettingsPage() {
               >
                 <div className="flex items-center gap-3">
                   <span className="text-base font-semibold">{provider.name}</span>
+                  {provider.active && (
+                    <span className="flex items-center gap-1 font-mono text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded">
+                      <Zap size={9} /> {t.settings.activeProvider}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {!provider.active && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); activateProviderHandler(provider.id); }}
+                      className="text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded border border-border hover:border-primary/30"
+                    >
+                      {t.settings.setActive}
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -455,7 +445,7 @@ export default function SettingsPage() {
                       </div>
                       <div className="space-y-2">
                         {providerMsg && (
-                          <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
+                          <span className={`block text-sm font-mono ${providerMsg.startsWith("✓") || providerMsg === t.settings.verifySuccess ? "text-success" : providerMsg === t.settings.verifying ? "text-muted-foreground" : "text-destructive"}`}>
                             {providerMsg}
                           </span>
                         )}
@@ -690,7 +680,7 @@ export default function SettingsPage() {
                             setContentModel(m);
                             setContentProviderId(modelProvId ?? "");
                             setModelOpen(false);
-                            saveContentModel(m, modelProvId ?? "");
+                            saveSettings({ content_model: m, content_provider_id: modelProvId ?? "" });
                           }}
                           className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors ${
                             contentModel === m
@@ -717,12 +707,6 @@ export default function SettingsPage() {
       <section className="animate-fade-up" style={{ animationDelay: "160ms" }}>
         <div className="flex items-center justify-between mb-5">
           <SectionTitle>{t.settings.services}</SectionTitle>
-          {(saving || saveMsg) && (
-            <span className={`text-xs font-mono flex items-center gap-1 ${saveMsg === t.settings.savedOk ? "text-success" : saveMsg ? "text-destructive" : "text-muted-foreground"}`}>
-              {saving && <Loader2 size={11} className="animate-spin" />}
-              {saving ? t.settings.verifying.replace("验证连接中", "保存中").replace("Verifying connection", "Saving") : saveMsg}
-            </span>
-          )}
         </div>
 
         <div className="space-y-4">
@@ -743,7 +727,7 @@ export default function SettingsPage() {
             <InputField
               value={elevenLabsKey}
               onChange={setElevenLabsKey}
-              placeholder={elevenLabsKeySet ? t.settings.keyAlreadySet : "ElevenLabs API Key"}
+              placeholder="ElevenLabs API Key"
               type="password"
               mono
             />
@@ -768,7 +752,14 @@ export default function SettingsPage() {
                   <select
                     className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
                     value={assistantVoiceId || voices[0]?.id || ""}
-                    onChange={(e) => { stopPreview(); setAssistantVoiceId(e.target.value); const v = voices.find(vv => vv.id === e.target.value); doSave(e.target.value, v ? v.name.split(" - ")[0].trim() : undefined); }}
+                    onChange={(e) => {
+                      stopPreview();
+                      const vid = e.target.value;
+                      setAssistantVoiceId(vid);
+                      const v = voices.find(vv => vv.id === vid);
+                      const vname = v ? v.name.split(" - ")[0].trim() : undefined;
+                      saveSettings({ assistant_voice_id: vid, assistant_voice_name: vname ?? "" });
+                    }}
                   >
                     {voices.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -798,7 +789,7 @@ export default function SettingsPage() {
                 {(["scribe_v1", "scribe_v2"] as const).map(m => (
                   <button
                     key={m}
-                    onClick={() => { setSttModel(m); saveSttModel(m); }}
+                    onClick={() => { setSttModel(m); saveSettings({ stt_model: m }); }}
                     className={`flex-1 py-2 rounded-md text-sm font-mono border transition-all ${
                       sttModel === m
                         ? "bg-primary/10 border-primary/40 text-primary"
@@ -829,7 +820,7 @@ export default function SettingsPage() {
             <InputField
               value={firecrawlKey}
               onChange={setFirecrawlKey}
-              placeholder={firecrawlKeySet ? t.settings.keyAlreadySet : "Firecrawl API Key"}
+              placeholder="Firecrawl API Key"
               type="password"
               mono
             />

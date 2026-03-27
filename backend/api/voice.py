@@ -10,7 +10,6 @@ from services.elevenlabs import stt, tts
 from api.generating_registry import register as reg_register, update_progress as reg_update, unregister as reg_unregister, update_title as reg_update_title, get_title as reg_get_title
 from services.llm import chat, chat_stream
 from services.firecrawl import search
-from config import get_settings
 from database import (
     save_interrupted_session,
     get_interrupted_sessions,
@@ -293,10 +292,44 @@ def remove_interrupted_session(session_id: str):
 # ── WebSocket ──────────────────────────────────────────────────────────────────
 
 @router.websocket("/api/voice/stream")
-async def voice_stream(websocket: WebSocket, resume_id: Optional[str] = Query(None), ui_lang: str = Query("zh")):
+async def voice_stream(
+    websocket: WebSocket,
+    resume_id: Optional[str] = Query(None),
+    ui_lang: str = Query("zh"),
+    elevenlabs_key: str = Query(""),
+    firecrawl_key: str = Query(""),
+    provider_base_url: str = Query(""),
+    provider_api_key: str = Query(""),
+    provider_model: str = Query(""),
+    provider_name: str = Query(""),
+    content_provider_id: str = Query(""),
+    content_model: str = Query(""),
+    assistant_voice_id: str = Query(""),
+    stt_model: str = Query("scribe_v1"),
+):
     await websocket.accept()
     session_id = str(uuid.uuid4())
-    settings = get_settings()
+
+    # 从 query params 构建 settings dict（不再读取服务器存储）
+    settings = {
+        "elevenlabs_key": elevenlabs_key,
+        "firecrawl_key": firecrawl_key,
+        "assistant_voice_id": assistant_voice_id,
+        "stt_model": stt_model or "scribe_v1",
+        "content_model": content_model,
+        "content_provider_id": content_provider_id or ("client-provider" if provider_base_url else ""),
+        "providers": [
+            {
+                "id": content_provider_id or "client-provider",
+                "name": provider_name or "Provider",
+                "base_url": provider_base_url,
+                "api_key": provider_api_key,
+                "models": [provider_model] if provider_model else [],
+                "active": True,
+            }
+        ] if provider_base_url and provider_api_key else [],
+    }
+
     ui_lang = ui_lang if ui_lang in ("zh", "en") else "zh"
 
     # 检查是否是恢复会话

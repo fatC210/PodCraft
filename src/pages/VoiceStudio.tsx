@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { PhoneOff, Mic, MicOff, AlertCircle, Play, Pause, Send, CheckCircle2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { fetchSettings, fetchVoices, type Voice } from "@/lib/api";
+import { fetchVoices, buildVoiceStreamUrl, type Voice } from "@/lib/api";
+import { getSettings } from "@/lib/settings-store";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -433,20 +434,17 @@ export default function VoiceStudio() {
 
   // Fetch AI voice name from settings
   useEffect(() => {
-    fetchSettings()
-      .then(s => {
-        if (s.assistant_voice_name) {
-          setAiName(s.assistant_voice_name);
-        } else if (s.assistant_voice_id) {
-          fetchVoices()
-            .then(voices => {
-              const v = voices.find(v => v.id === s.assistant_voice_id);
-              if (v) setAiName(v.name.split(" - ")[0].trim());
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {});
+    const s = getSettings();
+    if (s.assistant_voice_name) {
+      setAiName(s.assistant_voice_name);
+    } else if (s.assistant_voice_id) {
+      fetchVoices()
+        .then(voices => {
+          const v = voices.find(v => v.id === s.assistant_voice_id);
+          if (v) setAiName(v.name.split(" - ")[0].trim());
+        })
+        .catch(() => {});
+    }
   }, []);
 
   // ── Audio playback queue ──────────────────────────────────────────────────
@@ -628,11 +626,7 @@ export default function VoiceStudio() {
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
   const connectWebSocket = useCallback(() => {
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const base = `${protocol}://${window.location.host}/api/voice/stream`;
-    const params = new URLSearchParams({ ui_lang: locale });
-    if (resumeId) params.set("resume_id", resumeId);
-    const ws = new WebSocket(`${base}?${params}`);
+    const ws = new WebSocket(buildVoiceStreamUrl(locale, resumeId));
     wsRef.current = ws;
     // 新连接时重置已确认阶段记录
     confirmedStagesRef.current = new Set();

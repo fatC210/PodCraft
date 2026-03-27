@@ -1,13 +1,33 @@
 /**
  * PodCraft API 客户端
  * 所有请求通过 vite proxy 转发到 http://localhost:8000
+ * API Keys 从前端 localStorage 读取，通过 HTTP header 传递给后端
  */
+
+import { getSettings, getActiveProvider } from "./settings-store";
 
 const BASE = "/api";
 
+function buildHeaders(extra?: Record<string, string>): Record<string, string> {
+  const settings = getSettings();
+  const provider = getActiveProvider(settings);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  if (settings.elevenlabs_key) headers["X-ElevenLabs-Key"] = settings.elevenlabs_key;
+  if (settings.firecrawl_key) headers["X-Firecrawl-Key"] = settings.firecrawl_key;
+  if (provider) {
+    headers["X-Provider-Base-Url"] = provider.base_url;
+    headers["X-Provider-Api-Key"] = provider.api_key;
+    headers["X-Provider-Model"] =
+      settings.content_model || provider.models[0] || "";
+  }
+
+  return { ...headers, ...extra };
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { ...buildHeaders(), ...(options?.headers as Record<string, string> | undefined) },
     ...options,
   });
   if (!res.ok) {
@@ -17,63 +37,42 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// ── Settings ──────────────────────────────────────────────────────────────────
+// ── WebSocket URL builder ───────────────────────────────────────────────────
 
-export type ServiceSettings = {
-  elevenlabs_key: string;
-  firecrawl_key: string;
-  assistant_voice_id?: string;
-  assistant_voice_name?: string;
-  content_model?: string;
-  content_provider_id?: string;
-  stt_model?: string;
-};
+export function buildVoiceStreamUrl(locale: string, resumeId?: string | null): string {
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const base = `${protocol}://${window.location.host}/api/voice/stream`;
+  const settings = getSettings();
+  const provider = getActiveProvider(settings);
 
-export type Provider = {
-  id: string;
-  name: string;
-  base_url: string;
-  api_key: string;
-  models: string[];
-  active: boolean;
-};
+  const params = new URLSearchParams({ ui_lang: locale });
+  if (resumeId) params.set("resume_id", resumeId);
+  if (settings.elevenlabs_key) params.set("elevenlabs_key", settings.elevenlabs_key);
+  if (settings.firecrawl_key) params.set("firecrawl_key", settings.firecrawl_key);
+  if (settings.assistant_voice_id) params.set("assistant_voice_id", settings.assistant_voice_id);
+  if (settings.stt_model) params.set("stt_model", settings.stt_model);
+  if (provider) {
+    params.set("provider_base_url", provider.base_url);
+    params.set("provider_api_key", provider.api_key);
+    params.set("provider_model", settings.content_model || provider.models[0] || "");
+    params.set("provider_name", provider.name);
+    params.set("content_provider_id", provider.id);
+  }
+  if (settings.content_model) params.set("content_model", settings.content_model);
 
-export function fetchSettings(): Promise<ServiceSettings> {
-  return request("/settings");
+  return `${base}?${params}`;
 }
 
-export function saveServiceSettings(data: ServiceSettings): Promise<{ ok: boolean; elevenlabs_verified?: boolean | null }> {
-  return request("/settings/services", { method: "PUT", body: JSON.stringify(data) });
-}
+// ── Models endpoint (backend proxies to LLM provider) ──────────────────────
 
-export function fetchProviders(): Promise<Provider[]> {
-  return request("/settings/providers");
-}
-
-export function saveProvider(provider: Omit<Provider, "id" | "active"> & { models?: string[] }): Promise<Provider> {
+export function fetchProviderModels(base_url: string, api_key: string): Promise<{ models: string[]; error?: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
-  return request("/settings/providers", { method: "POST", body: JSON.stringify(provider), signal: ctrl.signal })
-    .finally(() => clearTimeout(timer));
-}
-
-export function updateProvider(id: string, provider: { name: string; base_url: string; api_key?: string; models?: string[] }): Promise<Provider> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
-  return request(`/settings/providers/${id}`, { method: "PUT", body: JSON.stringify(provider), signal: ctrl.signal })
-    .finally(() => clearTimeout(timer));
-}
-
-export function activateProvider(id: string): Promise<{ ok: boolean }> {
-  return request(`/settings/providers/${id}/activate`, { method: "PUT" });
-}
-
-export function deleteProvider(id: string): Promise<{ ok: boolean }> {
-  return request(`/settings/providers/${id}`, { method: "DELETE" });
-}
-
-export function fetchProviderModels(id: string): Promise<string[]> {
-  return request(`/settings/providers/${id}/models`);
+  return request("/settings/models", {
+    method: "POST",
+    body: JSON.stringify({ base_url, api_key }),
+    signal: ctrl.signal,
+  }).finally(() => clearTimeout(timer));
 }
 
 // ── Voices ────────────────────────────────────────────────────────────────────
@@ -153,16 +152,6 @@ export type PodcastHistoryItem = {
   current?: number;
   total?: number;
 };
-
-export function generatePodcast(params: {
-  script: ScriptLine[];
-  voice_assignments: Record<string, string>;
-  title: string;
-  language: string;
-  materials_count: number;
-}): Promise<{ id: string; audio_url: string; duration: string }> {
-  return request("/podcast/generate", { method: "POST", body: JSON.stringify(params) });
-}
 
 export function fetchHistory(): Promise<PodcastHistoryItem[]> {
   return request("/podcast/history");

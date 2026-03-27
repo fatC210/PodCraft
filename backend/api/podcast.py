@@ -3,11 +3,10 @@ import re
 import json
 from pathlib import Path
 from datetime import datetime
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, Optional
-from config import get_settings
 from services.elevenlabs import tts
 from database import save_podcast, get_podcasts, get_podcast_by_id, delete_podcast as db_delete_podcast
 from api.generating_registry import get_all as get_generating
@@ -47,12 +46,11 @@ def parse_script_segments(script: str, voice_assignments: Dict[str, str]) -> lis
 
 
 @router.post("/api/podcast/generate")
-async def generate_podcast(body: GeneratePodcastRequest):
-    settings = get_settings()
-    api_key = settings.get("elevenlabs_key", "")
+async def generate_podcast(body: GeneratePodcastRequest, x_elevenlabs_key: Optional[str] = Header(None)):
+    api_key = x_elevenlabs_key or ""
     if not api_key:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="ElevenLabs API key not configured")
+        raise HTTPException(status_code=400, detail="ElevenLabs API key not provided")
 
     segments = parse_script_segments(body.script, body.voice_assignments)
     if not segments:

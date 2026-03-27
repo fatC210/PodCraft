@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# cache-bust-20260327
 COPY . .
 
 RUN mkdir -p storage data

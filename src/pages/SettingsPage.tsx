@@ -249,6 +249,12 @@ export default function SettingsPage() {
     try {
       const list = await fetchVoices();
       setVoices(list);
+      // 若已有 voice_id 但未保存 voice_name，自动补填
+      const s = getSettings();
+      if (s.assistant_voice_id && !s.assistant_voice_name) {
+        const v = list.find(vv => vv.id === s.assistant_voice_id);
+        if (v) saveSettings({ assistant_voice_name: v.name.split(" - ")[0].trim() });
+      }
     } catch (e) {
       setVoicesError(e instanceof Error ? e.message : String(e));
     } finally {

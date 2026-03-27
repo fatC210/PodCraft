@@ -5,7 +5,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppLayout from "./components/layout/AppLayout";
 import Index from "./pages/Index";
-import VoiceStudio from "./pages/VoiceStudio";
 import History from "./pages/History";
 import SettingsPage from "./pages/SettingsPage";
 import PodcastPlayer from "./pages/PodcastPlayer";
@@ -23,7 +22,7 @@ const App = () => (
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/" element={<Index />} />
-            <Route path="/create" element={<VoiceStudio />} />
+            <Route path="/create" element={null} />
             <Route path="/history" element={<History />} />
             <Route path="/podcast/:id" element={<PodcastPlayer />} />
             <Route path="/history/session/:id" element={<SessionDetail />} />
